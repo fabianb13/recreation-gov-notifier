@@ -42,16 +42,21 @@ class RecreationGovAPI:
         return None
     
     def format_date_for_request(self, date_obj: datetime) -> str:
-        """Format datetime object to Recreation.gov API format with milliseconds"""
-        # Output format: YYYY-MM-DDTHH:MM:SS.000Z (with milliseconds)
+        """Format datetime object to Recreation.gov API format for request parameters"""
+        # Output format: YYYY-MM-DDTHH:MM:SS.000Z (with milliseconds for API request)
         return date_obj.strftime("%Y-%m-%dT00:00:00.000Z")
+    
+    def format_date_for_comparison(self, date_obj: datetime) -> str:
+        """Format datetime object for comparing with API response data"""
+        # Output format: YYYY-MM-DDTHH:MM:SSZ (without milliseconds to match API response)
+        return date_obj.strftime("%Y-%m-%dT00:00:00Z")
     
     def format_date_for_response(self, date_str: str) -> str:
         """Format date string to match API response format"""
-        # Convert YYYY-MM-DD to YYYY-MM-DDTHH:MM:SS.000Z
+        # Convert YYYY-MM-DD to YYYY-MM-DDTHH:MM:SSZ
         try:
             date_obj = datetime.strptime(date_str, "%Y-%m-%d")
-            return self.format_date_for_request(date_obj)
+            return self.format_date_for_comparison(date_obj)
         except Exception:
             return date_str
     
@@ -168,52 +173,71 @@ class RecreationGovAPI:
                 "success": False
             }
     
-    def get_campsite_availability_for_dates(self, campsites_data: Dict, start_date: str, end_date: str) -> Dict:
+    def get_campsite_availability_for_dates(self, campsites_data: Dict, start_date: str, end_date: str, min_nights: int = 1) -> Dict:
         """
         Parse availability data for specific date range
-        A campsite is only considered available if ALL dates in the range are "Available"
+        A campsite is considered available if at least min_nights consecutive nights are available
         Returns dict of campsite_id -> availability status
+        
+        Args:
+            campsites_data: Dictionary of campsite data from API
+            start_date: Start date in YYYY-MM-DD format
+            end_date: End date in YYYY-MM-DD format  
+            min_nights: Minimum number of consecutive nights required (default: 1)
         """
         available_campsites = {}
         
-        # Generate set of dates in the range (formatted for comparison with API response)
+        # Generate list of dates in the range (formatted for comparison with API response)
         start_dt = datetime.strptime(start_date, "%Y-%m-%d")
         end_dt = datetime.strptime(end_date, "%Y-%m-%d")
         num_days = (end_dt - start_dt).days
         
-        # Create set of dates to check (excluding end_date since it's the checkout day)
-        # Format as YYYY-MM-DDTHH:MM:SS.000Z to match API response format
-        date_range = set()
+        # Create ordered list of dates to check (excluding end_date since it's the checkout day)
+        # Format as YYYY-MM-DDTHH:MM:SSZ to match API response format (no milliseconds)
+        date_range = []
         for i in range(num_days):
             check_date = start_dt + timedelta(days=i)
-            date_range.add(self.format_date_for_request(check_date))
+            date_range.append(self.format_date_for_comparison(check_date))
         
-        if not date_range:
+        if not date_range or min_nights < 1:
             return available_campsites
         
         for campsite_id, campsite_info in campsites_data.items():
             availabilities = campsite_info.get("availabilities", {})
             
-            # Check if ALL dates in range are available
-            # A site is only available if every single night is available
-            has_full_availability = True
-            available_nights = []
+            # Find consecutive available nights
+            consecutive_nights = 0
+            max_consecutive = 0
+            consecutive_sequences = []
+            current_sequence = []
             
             for check_date in date_range:
                 status = availabilities.get(check_date, "Not Available")
                 if status == "Available":
-                    available_nights.append(check_date)
+                    consecutive_nights += 1
+                    current_sequence.append(check_date)
+                    max_consecutive = max(max_consecutive, consecutive_nights)
                 else:
-                    has_full_availability = False
-                    break
+                    if len(current_sequence) >= min_nights:
+                        consecutive_sequences.append(current_sequence[:])
+                    current_sequence = []
+                    consecutive_nights = 0
             
-            # Only include if ALL nights are available
-            if has_full_availability and len(available_nights) == len(date_range):
+            # Check final sequence
+            if len(current_sequence) >= min_nights:
+                consecutive_sequences.append(current_sequence[:])
+            
+            # Campsite is available if we found at least one sequence of min_nights or more
+            if max_consecutive >= min_nights and consecutive_sequences:
+                # Use the longest sequence for the response
+                longest_sequence = max(consecutive_sequences, key=len)
                 available_campsites[campsite_id] = {
                     "name": campsite_info.get("campsite_name", f"Site {campsite_id}"),
                     "type": campsite_info.get("campsite_type", "Standard"),
                     "has_availability": True,
-                    "available_dates": available_nights,
+                    "available_dates": longest_sequence,
+                    "consecutive_nights": len(longest_sequence),
+                    "all_available_sequences": consecutive_sequences,
                     "availabilities": {k: v for k, v in availabilities.items() if k in date_range}
                 }
         

@@ -24,6 +24,7 @@ const Dashboard = () => {
   const [endDate, setEndDate] = useState('');
   const [notifyEmail, setNotifyEmail] = useState(true);
   const [notifySms, setNotifySms] = useState(false);
+  const [minNights, setMinNights] = useState(1);
   const [submitting, setSubmitting] = useState(false);
   
   // Analytics state
@@ -61,6 +62,7 @@ const Dashboard = () => {
         end_date: endDate,
         notify_email: notifyEmail,
         notify_sms: notifySms,
+        min_nights: minNights,
       });
 
       setSuccess('Notification request created successfully!');
@@ -68,6 +70,7 @@ const Dashboard = () => {
       setFacilityName('');
       setStartDate('');
       setEndDate('');
+      setMinNights(1);
       fetchNotifications();
     } catch (err) {
       setError(err.response?.data?.detail || 'Failed to create notification request');
@@ -167,6 +170,19 @@ const Dashboard = () => {
               />
             </div>
           </div>
+          <div className="form-group">
+            <label>Minimum Consecutive Nights</label>
+            <input
+              type="number"
+              value={minNights}
+              onChange={(e) => setMinNights(Math.max(1, parseInt(e.target.value) || 1))}
+              min="1"
+              required
+            />
+            <small style={{ color: '#666', fontSize: '0.875rem', marginTop: '4px', display: 'block' }}>
+              Campsite must have at least this many consecutive nights available
+            </small>
+          </div>
           <div className="checkbox-group">
             <input
               type="checkbox"
@@ -209,11 +225,32 @@ const Dashboard = () => {
                 <strong>Dates:</strong> {notification.start_date} to {notification.end_date}
               </div>
               <div className="meta">
-                <strong>Last Checked:</strong>{' '}
-                {notification.last_checked
-                  ? new Date(notification.last_checked).toLocaleString()
-                  : 'Never'}
+                <strong>Minimum Nights:</strong> {notification.min_nights || 1}
               </div>
+              
+              {/* Availability Status */}
+              <div style={{ 
+                margin: '12px 0',
+                padding: '12px',
+                backgroundColor: notification.last_available_count > 0 ? '#d4edda' : '#f8f9fa',
+                border: `2px solid ${notification.last_available_count > 0 ? '#28a745' : '#dee2e6'}`,
+                borderRadius: '4px'
+              }}>
+                <div style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '4px' }}>
+                  Current Availability:
+                </div>
+                <div style={{ fontSize: '18px', fontWeight: 'bold', color: notification.last_available_count > 0 ? '#28a745' : '#6c757d' }}>
+                  {notification.last_available_count !== undefined && notification.last_available_count !== null
+                    ? `${notification.last_available_count} site${notification.last_available_count !== 1 ? 's' : ''} available`
+                    : 'Not checked yet'}
+                </div>
+                {notification.last_checked && (
+                  <div style={{ fontSize: '12px', color: '#6c757d', marginTop: '4px' }}>
+                    Last updated: {new Date(notification.last_checked).toLocaleString()}
+                  </div>
+                )}
+              </div>
+              
               <div className="meta">
                 <strong>Last Notified:</strong>{' '}
                 {notification.last_notified

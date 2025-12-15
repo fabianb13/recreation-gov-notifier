@@ -51,10 +51,12 @@ class AvailabilityScheduler:
             total_sites = availability_data.get("count", 0)
             
             # Parse availability for date range
+            min_nights = request.get("min_nights", 1)
             available_sites = recreation_api.get_campsite_availability_for_dates(
                 campsites_data,
                 request["start_date"],
-                request["end_date"]
+                request["end_date"],
+                min_nights=min_nights
             )
             
             # Filter to only sites with availability
@@ -127,10 +129,13 @@ class AvailabilityScheduler:
                         {"$set": {"last_notified": datetime.utcnow()}}
                     )
             
-            # Update last checked timestamp
+            # Update last checked timestamp and availability count
             await db.notification_requests.update_one(
                 {"_id": request["_id"]},
-                {"$set": {"last_checked": datetime.utcnow()}}
+                {"$set": {
+                    "last_checked": datetime.utcnow(),
+                    "last_available_count": len(newly_available)
+                }}
             )
             
         except Exception as e:

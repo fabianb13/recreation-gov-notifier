@@ -174,6 +174,7 @@ async def create_notification_request(
         "end_date": request.end_date,
         "notify_email": request.notify_email,
         "notify_sms": request.notify_sms,
+        "min_nights": request.min_nights,
         "created_at": datetime.utcnow(),
         "last_checked": None,
         "last_notified": None
@@ -191,9 +192,11 @@ async def create_notification_request(
         end_date=notification_dict["end_date"],
         notify_email=notification_dict["notify_email"],
         notify_sms=notification_dict["notify_sms"],
+        min_nights=notification_dict["min_nights"],
         created_at=notification_dict["created_at"],
         last_checked=notification_dict.get("last_checked"),
-        last_notified=notification_dict.get("last_notified")
+        last_notified=notification_dict.get("last_notified"),
+        last_available_count=notification_dict.get("last_available_count")
     )
 
 
@@ -216,9 +219,11 @@ async def get_notification_requests(current_user: dict = Depends(get_current_use
             end_date=req["end_date"],
             notify_email=req["notify_email"],
             notify_sms=req["notify_sms"],
+            min_nights=req.get("min_nights", 1),
             created_at=req["created_at"],
             last_checked=req.get("last_checked"),
-            last_notified=req.get("last_notified")
+            last_notified=req.get("last_notified"),
+            last_available_count=req.get("last_available_count")
         )
         for req in requests
     ]
@@ -255,6 +260,8 @@ async def update_notification_request(
         update_dict["start_date"] = update.start_date
     if update.end_date is not None:
         update_dict["end_date"] = update.end_date
+    if update.min_nights is not None:
+        update_dict["min_nights"] = update.min_nights
     
     if update_dict:
         await db.notification_requests.update_one(
@@ -274,9 +281,11 @@ async def update_notification_request(
         end_date=updated["end_date"],
         notify_email=updated["notify_email"],
         notify_sms=updated["notify_sms"],
+        min_nights=updated.get("min_nights", 1),
         created_at=updated["created_at"],
         last_checked=updated.get("last_checked"),
-        last_notified=updated.get("last_notified")
+        last_notified=updated.get("last_notified"),
+        last_available_count=updated.get("last_available_count")
     )
 
 

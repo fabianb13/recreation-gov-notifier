@@ -52,6 +52,7 @@ class NotificationRequestCreate(BaseModel):
     end_date: str
     notify_email: bool = True
     notify_sms: bool = False
+    min_nights: int = 1
 
 
 class NotificationRequestUpdate(BaseModel):
@@ -59,6 +60,7 @@ class NotificationRequestUpdate(BaseModel):
     notify_sms: Optional[bool] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
+    min_nights: Optional[int] = None
 
 
 class NotificationRequestResponse(BaseModel):
@@ -70,9 +72,11 @@ class NotificationRequestResponse(BaseModel):
     end_date: str
     notify_email: bool
     notify_sms: bool
+    min_nights: int = 1
     created_at: datetime
     last_checked: Optional[datetime] = None
     last_notified: Optional[datetime] = None
+    last_available_count: Optional[int] = None
 
 
 # Settings Models
