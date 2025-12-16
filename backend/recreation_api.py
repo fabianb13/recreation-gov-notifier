@@ -90,19 +90,47 @@ class RecreationGovAPI:
         
         The API requires querying by month. If the date range spans multiple months,
         we need to make multiple requests (one per month).
+        
+        Note: Recreation.gov API only supports dates up to 2 years in the future.
+        Dates beyond this limit will be capped automatically.
         """
         try:
             # Parse input dates
             start_dt = datetime.strptime(start_date, "%Y-%m-%d")
             end_dt = datetime.strptime(end_date, "%Y-%m-%d")
             
+            # Recreation.gov API only supports dates up to 2 years from today
+            today = datetime.now()
+            max_api_date = today + timedelta(days=730)  # 2 years = 730 days
+            
+            # Cap the end date to the API limit
+            original_end_dt = end_dt
+            if end_dt > max_api_date:
+                print(f"Warning: End date {end_date} is beyond API limit (2 years). Capping to {max_api_date.strftime('%Y-%m-%d')}")
+                end_dt = max_api_date
+            
+            # Don't query API if start date is already beyond the limit
+            if start_dt > max_api_date:
+                print(f"Warning: Start date {start_date} is beyond API limit (2 years). No data available.")
+                return {
+                    "facility_id": facility_id,
+                    "count": 0,
+                    "campsites": {},
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "success": True,
+                    "capped_date": True,
+                    "beyond_api_limit": True
+                }
+            
             # Get first of month for start date
             start_of_month = datetime(start_dt.year, start_dt.month, 1)
             
-            # Get all months we need to query
+            # Get all months we need to query (within API limit)
             months = list(rrule.rrule(rrule.MONTHLY, dtstart=start_of_month, until=end_dt))
             
-            print(f"Checking availability for facility {facility_id} from {start_date} to {end_date}")
+            print(f"Checking availability for facility {facility_id} from {start_date} to {end_dt.strftime('%Y-%m-%d')}")
+            if original_end_dt != end_dt:
+                print(f"  (Original end date {original_end_dt.strftime('%Y-%m-%d')} capped due to API limit)")
             print(f"Need to query {len(months)} month(s)")
             
             # Collect data from all months
@@ -152,13 +180,21 @@ class RecreationGovAPI:
                     "success": False
                 }
             
-            return {
+            result = {
                 "facility_id": facility_id,
                 "count": total_count,
                 "campsites": all_campsites_data,
                 "timestamp": datetime.utcnow().isoformat(),
                 "success": True
             }
+            
+            # Add metadata if date was capped
+            if original_end_dt != end_dt:
+                result["capped_date"] = True
+                result["requested_end_date"] = original_end_dt.strftime("%Y-%m-%d")
+                result["actual_end_date"] = end_dt.strftime("%Y-%m-%d")
+            
+            return result
                 
         except Exception as e:
             print(f"Error checking availability for facility {facility_id}: {e}")
@@ -184,6 +220,9 @@ class RecreationGovAPI:
             start_date: Start date in YYYY-MM-DD format
             end_date: End date in YYYY-MM-DD format  
             min_nights: Minimum number of consecutive nights required (default: 1)
+            
+        Note: Only dates within the API's 2-year window will have actual availability data.
+        Dates beyond 2 years are assumed unavailable.
         """
         available_campsites = {}
         
@@ -191,6 +230,10 @@ class RecreationGovAPI:
         start_dt = datetime.strptime(start_date, "%Y-%m-%d")
         end_dt = datetime.strptime(end_date, "%Y-%m-%d")
         num_days = (end_dt - start_dt).days
+        
+        # Calculate API limit (2 years from today)
+        today = datetime.now()
+        max_api_date = today + timedelta(days=730)
         
         # Create ordered list of dates to check (excluding end_date since it's the checkout day)
         # Format as YYYY-MM-DDTHH:MM:SSZ to match API response format (no milliseconds)
@@ -212,7 +255,16 @@ class RecreationGovAPI:
             current_sequence = []
             
             for check_date in date_range:
-                status = availabilities.get(check_date, "Not Available")
+                # Check if this date is beyond the API limit
+                check_dt = datetime.strptime(check_date, "%Y-%m-%dT%H:%M:%SZ")
+                is_beyond_api_limit = check_dt > max_api_date
+                
+                # Dates beyond API limit are assumed unavailable
+                if is_beyond_api_limit:
+                    status = "Not Available"
+                else:
+                    status = availabilities.get(check_date, "Not Available")
+                
                 if status == "Available":
                     consecutive_nights += 1
                     current_sequence.append(check_date)
