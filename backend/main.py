@@ -398,6 +398,154 @@ async def get_facility_analytics(
     )
 
 
+# Push Subscription endpoints
+@app.get("/api/push/vapid-public-key")
+async def get_vapid_public_key():
+    """Get the VAPID public key for push notifications"""
+    from config import settings
+    return {"publicKey": settings.VAPID_PUBLIC_KEY}
+
+
+@app.post("/api/push/subscribe")
+async def subscribe_to_push(
+    subscription: dict,
+    current_user: dict = Depends(get_current_user)
+):
+    """Subscribe to push notifications"""
+    db = get_database()
+    
+    # Check if subscription already exists
+    existing = await db.push_subscriptions.find_one({
+        "user_id": current_user["_id"],
+        "endpoint": subscription["endpoint"]
+    })
+    
+    if existing:
+        return {"message": "Subscription already exists", "id": str(existing["_id"])}
+    
+    # Create new subscription
+    subscription_doc = {
+        "user_id": current_user["_id"],
+        "endpoint": subscription["endpoint"],
+        "keys": subscription["keys"],
+        "created_at": datetime.utcnow()
+    }
+    
+    result = await db.push_subscriptions.insert_one(subscription_doc)
+    
+    return {
+        "message": "Subscribed to push notifications",
+        "id": str(result.inserted_id)
+    }
+
+
+@app.delete("/api/push/unsubscribe")
+async def unsubscribe_from_push(
+    endpoint: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Unsubscribe from push notifications"""
+    db = get_database()
+    
+    result = await db.push_subscriptions.delete_one({
+        "user_id": current_user["_id"],
+        "endpoint": endpoint
+    })
+    
+    if result.deleted_count == 0:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Subscription not found"
+        )
+    
+    return {"message": "Unsubscribed from push notifications"}
+
+
+@app.get("/api/push/subscriptions")
+async def get_push_subscriptions(current_user: dict = Depends(get_current_user)):
+    """Get all push subscriptions for the current user"""
+    db = get_database()
+    
+    subscriptions = await db.push_subscriptions.find({
+        "user_id": current_user["_id"]
+    }).to_list(length=None)
+    
+    return {
+        "subscriptions": [
+            {
+                "id": str(sub["_id"]),
+                "endpoint": sub["endpoint"],
+                "created_at": sub["created_at"]
+            }
+            for sub in subscriptions
+        ]
+    }
+
+
+@app.post("/api/push/test")
+async def test_push_notification(current_user: dict = Depends(get_current_user)):
+    """Send a test push notification"""
+    from notifications import web_push_service
+    
+    if not web_push_service.enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Web push notifications are not configured"
+        )
+    
+    db = get_database()
+    
+    # Get user's push subscriptions
+    subscriptions = await db.push_subscriptions.find({
+        "user_id": current_user["_id"]
+    }).to_list(length=None)
+    
+    if not subscriptions:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No push subscriptions found. Please enable push notifications first."
+        )
+    
+    # Send test notification to all subscriptions
+    sent_count = 0
+    expired_subscriptions = []
+    
+    for sub in subscriptions:
+        subscription_info = {
+            "endpoint": sub["endpoint"],
+            "keys": sub["keys"]
+        }
+        
+        result = web_push_service.send_push_notification(
+            subscription_info=subscription_info,
+            title="🏕️ Test Notification",
+            body="Your push notifications are working! You'll receive alerts when campsites become available.",
+            url="http://localhost:3000"
+        )
+        
+        if result == "expired":
+            expired_subscriptions.append(sub["_id"])
+        elif result:
+            sent_count += 1
+    
+    # Remove expired subscriptions
+    if expired_subscriptions:
+        await db.push_subscriptions.delete_many({
+            "_id": {"$in": expired_subscriptions}
+        })
+    
+    if sent_count == 0:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to send push notification"
+        )
+    
+    return {
+        "message": f"Test notification sent to {sent_count} device(s)",
+        "expired_removed": len(expired_subscriptions)
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -2,7 +2,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from datetime import datetime
 from database import get_database
 from recreation_api import recreation_api
-from notifications import email_service, sms_service
+from notifications import email_service, sms_service, web_push_service
 from config import settings
 import asyncio
 
@@ -122,6 +122,39 @@ class AvailabilityScheduler:
                             newly_available,
                             dates
                         )
+                    
+                    # Send web push notification
+                    if request.get("notify_push", True) and web_push_service.enabled:
+                        # Get all push subscriptions for the user
+                        push_subscriptions = await db.push_subscriptions.find({
+                            "user_id": user["_id"]
+                        }).to_list(length=None)
+                        
+                        expired_subscriptions = []
+                        
+                        for sub in push_subscriptions:
+                            subscription_info = {
+                                "endpoint": sub["endpoint"],
+                                "keys": sub["keys"]
+                            }
+                            
+                            result = web_push_service.send_availability_notification(
+                                subscription_info=subscription_info,
+                                facility_name=request["facility_name"],
+                                available_sites=newly_available,
+                                dates=dates
+                            )
+                            
+                            # Track expired subscriptions for removal
+                            if result == "expired":
+                                expired_subscriptions.append(sub["_id"])
+                        
+                        # Remove expired subscriptions
+                        if expired_subscriptions:
+                            await db.push_subscriptions.delete_many({
+                                "_id": {"$in": expired_subscriptions}
+                            })
+                            print(f"Removed {len(expired_subscriptions)} expired push subscriptions")
                     
                     # Update last notified timestamp
                     await db.notification_requests.update_one(

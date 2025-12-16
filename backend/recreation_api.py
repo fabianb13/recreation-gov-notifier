@@ -4,6 +4,9 @@ from datetime import datetime, timedelta
 from dateutil import rrule
 from config import settings
 import re
+import time
+import random
+from rate_limiter import rate_limiter
 
 
 class RecreationGovAPI:
@@ -11,13 +14,19 @@ class RecreationGovAPI:
     AVAILABILITY_ENDPOINT = "/api/camps/availability/campground/{}/month"
     CAMPGROUND_ENDPOINT = "/api/camps/campgrounds/{}"
     
+    # Use token bucket rate limiter (global, thread-safe)
+    MAX_RETRIES = 3
+    INITIAL_RETRY_DELAY = 5  # Increased from 2 to 5 seconds
+    
     def __init__(self):
         # Recreation.gov public API doesn't require API key for availability checks
         # Use a realistic User-Agent to avoid being blocked
         self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "application/json"
+            "User-Agent": "RecreationGovNotifier/1.0 (Campsite Availability Monitoring Service)",
+            "Accept": "application/json",
+            "Accept-Encoding": "gzip, deflate"
         }
+        self.request_count = 0
     
     def parse_facility_id_from_url(self, url: str) -> Optional[str]:
         """
@@ -60,13 +69,97 @@ class RecreationGovAPI:
         except Exception:
             return date_str
     
+    def _acquire_rate_limit_token(self):
+        """Acquire a token from the rate limiter before making a request"""
+        wait_time = rate_limiter.acquire_with_wait(tokens=1)
+        if wait_time > 0.1:
+            print(f"Rate limiter: waited {wait_time:.2f}s (tokens available: {rate_limiter.get_available_tokens():.1f})")
+        self.request_count += 1
+    
+    def _make_request_with_retry(self, url: str, params: dict = None, timeout: int = 15) -> Optional[requests.Response]:
+        """Make HTTP request with retry logic, exponential backoff, and rate limiting"""
+        for attempt in range(self.MAX_RETRIES):
+            try:
+                # Acquire token from rate limiter (blocks until available)
+                self._acquire_rate_limit_token()
+                
+                # Make the request
+                response = requests.get(url, params=params, headers=self.headers, timeout=timeout)
+                
+                # Handle rate limiting (429)
+                if response.status_code == 429:
+                    retry_after = response.headers.get('Retry-After')
+                    if retry_after:
+                        try:
+                            wait_time = int(retry_after)
+                            print(f"⚠️ Rate limited (429). Retry-After header: {wait_time} seconds")
+                        except ValueError:
+                            # Retry-After might be a date, use longer backoff
+                            wait_time = self.INITIAL_RETRY_DELAY * (2 ** attempt)
+                    else:
+                        # No Retry-After header, use exponential backoff starting at 5s
+                        wait_time = self.INITIAL_RETRY_DELAY * (2 ** attempt)
+                        print(f"⚠️ Rate limited (429). Using exponential backoff: {wait_time} seconds")
+                    
+                    if attempt < self.MAX_RETRIES - 1:
+                        # Add jitter and extra padding to avoid thundering herd
+                        jitter = random.uniform(0, 2)
+                        total_wait = wait_time + jitter
+                        print(f"⏳ Waiting {total_wait:.2f} seconds before retry {attempt + 1}/{self.MAX_RETRIES}")
+                        print(f"💡 Current rate limiter tokens: {rate_limiter.get_available_tokens():.1f}")
+                        time.sleep(total_wait)
+                        # Give rate limiter time to refill
+                        time.sleep(2)
+                        continue
+                    else:
+                        print(f"❌ Max retries reached for rate limited request")
+                        return response
+                
+                # Handle server errors (5xx) with retry
+                if 500 <= response.status_code < 600:
+                    if attempt < self.MAX_RETRIES - 1:
+                        wait_time = self.INITIAL_RETRY_DELAY * (2 ** attempt)
+                        jitter = random.uniform(0, 1)
+                        total_wait = wait_time + jitter
+                        print(f"Server error {response.status_code}. Retrying in {total_wait:.2f} seconds (attempt {attempt + 1}/{self.MAX_RETRIES})")
+                        time.sleep(total_wait)
+                        continue
+                    else:
+                        print(f"Max retries reached for server error {response.status_code}")
+                        return response
+                
+                # Success or client error (not retryable)
+                return response
+                
+            except requests.exceptions.Timeout:
+                if attempt < self.MAX_RETRIES - 1:
+                    wait_time = self.INITIAL_RETRY_DELAY * (2 ** attempt)
+                    print(f"Request timeout. Retrying in {wait_time} seconds (attempt {attempt + 1}/{self.MAX_RETRIES})")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    print(f"Max retries reached for timeout")
+                    raise
+            
+            except requests.exceptions.RequestException as e:
+                if attempt < self.MAX_RETRIES - 1:
+                    wait_time = self.INITIAL_RETRY_DELAY * (2 ** attempt)
+                    print(f"Request error: {e}. Retrying in {wait_time} seconds (attempt {attempt + 1}/{self.MAX_RETRIES})")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    print(f"Max retries reached for request error")
+                    raise
+        
+        return None
+    
     def get_facility(self, facility_id: str) -> Optional[Dict]:
         """Get facility/campground information by ID"""
         try:
             url = self.BASE_URL + self.CAMPGROUND_ENDPOINT.format(facility_id)
-            response = requests.get(url, headers=self.headers, timeout=10)
-            if response.status_code != 200:
-                print(f"Error fetching facility {facility_id}: Status {response.status_code}")
+            response = self._make_request_with_retry(url, timeout=10)
+            if not response or response.status_code != 200:
+                print(f"Error fetching facility {facility_id}: Status {response.status_code if response else 'No response'}")
                 return None
             return response.json()
         except Exception as e:
@@ -128,26 +221,45 @@ class RecreationGovAPI:
             # Get all months we need to query (within API limit)
             months = list(rrule.rrule(rrule.MONTHLY, dtstart=start_of_month, until=end_dt))
             
-            print(f"Checking availability for facility {facility_id} from {start_date} to {end_dt.strftime('%Y-%m-%d')}")
+            # Limit to 12 months per query to avoid excessive API calls
+            MAX_MONTHS_PER_QUERY = 12
+            if len(months) > MAX_MONTHS_PER_QUERY:
+                print(f"⚠️ Date range spans {len(months)} months. Limiting to first {MAX_MONTHS_PER_QUERY} months to avoid rate limits.")
+                months = months[:MAX_MONTHS_PER_QUERY]
+                end_dt = months[-1]
+            
+            print(f"🔍 Checking availability for facility {facility_id} from {start_date} to {end_dt.strftime('%Y-%m-%d')}")
             if original_end_dt != end_dt:
                 print(f"  (Original end date {original_end_dt.strftime('%Y-%m-%d')} capped due to API limit)")
-            print(f"Need to query {len(months)} month(s)")
+            print(f"📅 Need to query {len(months)} month(s) - Rate limiter has {rate_limiter.get_available_tokens():.1f} tokens available")
             
             # Collect data from all months
             all_campsites_data = {}
             total_count = 0
             
-            for month_date in months:
+            for idx, month_date in enumerate(months, 1):
                 url = self.BASE_URL + self.AVAILABILITY_ENDPOINT.format(facility_id)
                 params = {"start_date": self.format_date_for_request(month_date)}
                 
-                print(f"Querying month: {month_date.strftime('%Y-%m')}")
+                print(f"📆 Querying month {idx}/{len(months)}: {month_date.strftime('%Y-%m')} (total requests: #{self.request_count + 1})")
                 
-                response = requests.get(url, params=params, headers=self.headers, timeout=15)
+                response = self._make_request_with_retry(url, params=params, timeout=15)
+                
+                if not response:
+                    print(f"❌ Error: No response received for {url}")
+                    # If we get no response, wait longer before continuing
+                    print(f"⏸️ Pausing 10 seconds before continuing...")
+                    time.sleep(10)
+                    continue
+                
+                if response.status_code == 429:
+                    print(f"🛑 Rate limit exceeded even after retries. Skipping remaining months to avoid further rate limiting.")
+                    print(f"💡 Processed {idx-1}/{len(months)} months successfully")
+                    break
                 
                 if response.status_code != 200:
                     print(f"Error: Received status code {response.status_code} from {url}")
-                    print(f"Response: {response.text}")
+                    print(f"Response: {response.text[:500]}...")  # Truncate long responses
                     continue
                 
                 month_data = response.json()
@@ -171,6 +283,7 @@ class RecreationGovAPI:
                     total_count = month_data.get("count", 0)
             
             if not all_campsites_data:
+                print(f"❌ No data returned from API for facility {facility_id}")
                 return {
                     "facility_id": facility_id,
                     "count": 0,
@@ -179,6 +292,9 @@ class RecreationGovAPI:
                     "error": "No data returned from API",
                     "success": False
                 }
+            
+            print(f"✅ Successfully retrieved data for {len(all_campsites_data)} campsites")
+            print(f"📊 Rate limiter tokens remaining: {rate_limiter.get_available_tokens():.1f}")
             
             result = {
                 "facility_id": facility_id,

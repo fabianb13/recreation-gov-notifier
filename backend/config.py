@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRATION_HOURS: int = 24
 
+    # Web Push Notifications (VAPID Keys)
+    VAPID_PRIVATE_KEY: Optional[str] = None
+    VAPID_PUBLIC_KEY: Optional[str] = None
+    VAPID_CLAIMS: Optional[str] = None
+
     class Config:
         env_file = ".env"
         case_sensitive = True

@@ -52,12 +52,14 @@ class NotificationRequestCreate(BaseModel):
     end_date: str
     notify_email: bool = True
     notify_sms: bool = False
+    notify_push: bool = True
     min_nights: int = 1
 
 
 class NotificationRequestUpdate(BaseModel):
     notify_email: Optional[bool] = None
     notify_sms: Optional[bool] = None
+    notify_push: Optional[bool] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     min_nights: Optional[int] = None
@@ -72,6 +74,7 @@ class NotificationRequestResponse(BaseModel):
     end_date: str
     notify_email: bool
     notify_sms: bool
+    notify_push: bool = True
     min_nights: int = 1
     created_at: datetime
     last_checked: Optional[datetime] = None
@@ -108,3 +111,22 @@ class FacilityAnalytics(BaseModel):
     facility_id: str
     facility_name: str
     weekly_stats: List[WeeklyStats]
+
+
+# Push Notification Models
+class PushSubscriptionKeys(BaseModel):
+    p256dh: str
+    auth: str
+
+
+class PushSubscriptionCreate(BaseModel):
+    endpoint: str
+    keys: PushSubscriptionKeys
+
+
+class PushSubscriptionResponse(BaseModel):
+    id: str
+    user_id: str
+    endpoint: str
+    keys: dict
+    created_at: datetime

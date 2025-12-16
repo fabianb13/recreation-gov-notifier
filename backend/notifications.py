@@ -2,8 +2,10 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from twilio.rest import Client
+from pywebpush import webpush, WebPushException
 from config import settings
 from typing import List
+import json
 
 
 class EmailService:
@@ -102,5 +104,77 @@ class SMSService:
         return self.send_sms(to_number, message)
 
 
+class WebPushService:
+    def __init__(self):
+        self.vapid_private_key = settings.VAPID_PRIVATE_KEY
+        self.vapid_public_key = settings.VAPID_PUBLIC_KEY
+        try:
+            self.vapid_claims = json.loads(settings.VAPID_CLAIMS)
+        except:
+            self.vapid_claims = {"sub": "mailto:noreply@example.com"}
+        self.enabled = bool(self.vapid_private_key and self.vapid_public_key)
+        
+        if not self.enabled:
+            print("Warning: Web Push notifications disabled - VAPID keys not configured")
+    
+    def send_push_notification(self, subscription_info: dict, title: str, body: str, 
+                              url: str = None, icon: str = None):
+        """Send a web push notification"""
+        if not self.enabled:
+            print("Web Push notifications are disabled")
+            return False
+        
+        try:
+            payload = {
+                "title": title,
+                "body": body,
+                "icon": icon or "/logo192.png",
+                "badge": "/logo192.png",
+                "vibrate": [200, 100, 200],
+                "data": {
+                    "url": url or "https://www.recreation.gov"
+                }
+            }
+            
+            webpush(
+                subscription_info=subscription_info,
+                data=json.dumps(payload),
+                vapid_private_key=self.vapid_private_key,
+                vapid_claims=self.vapid_claims
+            )
+            
+            print(f"Web push notification sent successfully")
+            return True
+        except WebPushException as e:
+            print(f"Error sending web push notification: {e}")
+            if e.response and e.response.status_code == 410:
+                # Subscription expired or invalid, should be removed
+                print("Subscription expired - should be removed from database")
+                return "expired"
+            return False
+        except Exception as e:
+            print(f"Unexpected error sending web push notification: {e}")
+            return False
+    
+    def send_availability_notification(self, subscription_info: dict, facility_name: str, 
+                                      available_sites: List[str], dates: str):
+        """Send availability notification via web push"""
+        title = f"🏕️ Campsites Available!"
+        
+        sites_str = ", ".join(available_sites[:3])
+        if len(available_sites) > 3:
+            sites_str += f" and {len(available_sites) - 3} more"
+        
+        body = f"{facility_name} has {len(available_sites)} site(s) available for {dates}. Sites: {sites_str}"
+        
+        return self.send_push_notification(
+            subscription_info=subscription_info,
+            title=title,
+            body=body,
+            url="https://www.recreation.gov"
+        )
+
+
 email_service = EmailService()
 sms_service = SMSService()
+web_push_service = WebPushService()

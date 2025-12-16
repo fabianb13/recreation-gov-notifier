@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { notificationsAPI, analyticsAPI } from '../api';
+import PushNotificationToggle from './PushNotificationToggle';
 import {
   LineChart,
   Line,
@@ -24,6 +25,7 @@ const Dashboard = () => {
   const [endDate, setEndDate] = useState('');
   const [notifyEmail, setNotifyEmail] = useState(true);
   const [notifySms, setNotifySms] = useState(false);
+  const [notifyPush, setNotifyPush] = useState(true);
   const [minNights, setMinNights] = useState(1);
   const [submitting, setSubmitting] = useState(false);
   
@@ -62,6 +64,7 @@ const Dashboard = () => {
         end_date: endDate,
         notify_email: notifyEmail,
         notify_sms: notifySms,
+        notify_push: notifyPush,
         min_nights: minNights,
       });
 
@@ -126,7 +129,8 @@ const Dashboard = () => {
         <h2>🏕️ Campsite Availability Tracker</h2>
         <p>Monitor your favorite campsites and get notified when spots become available</p>
       </div>
-
+      {/* Push Notification Settings */}
+      <PushNotificationToggle />
       {/* Add New Campsite Form */}
       <div className="card">
         <h3>➕ Add Campsite Monitor</h3>
@@ -193,7 +197,7 @@ const Dashboard = () => {
               checked={notifyEmail}
               onChange={(e) => setNotifyEmail(e.target.checked)}
             />
-            <label htmlFor="notify-email">Email Notifications</label>
+            <label htmlFor="notify-email">📧 Email Notifications</label>
           </div>
           <div className="checkbox-group">
             <input
@@ -202,7 +206,16 @@ const Dashboard = () => {
               checked={notifySms}
               onChange={(e) => setNotifySms(e.target.checked)}
             />
-            <label htmlFor="notify-sms">SMS Notifications</label>
+            <label htmlFor="notify-sms">📱 SMS Notifications</label>
+          </div>
+          <div className="checkbox-group">
+            <input
+              type="checkbox"
+              id="notify-push"
+              checked={notifyPush}
+              onChange={(e) => setNotifyPush(e.target.checked)}
+            />
+            <label htmlFor="notify-push">🔔 Push Notifications</label>
           </div>
           {error && <div className="alert alert-error">⚠️ {error}</div>}
           {success && <div className="alert alert-success">✓ {success}</div>}
@@ -289,7 +302,7 @@ const Dashboard = () => {
                       )
                     }
                   />
-                  <label htmlFor={`email-${notification.id}`}>Email</label>
+                  <label htmlFor={`email-${notification.id}`}>📧 Email</label>
                 </div>
                 <div className="checkbox-group">
                   <input
@@ -304,7 +317,22 @@ const Dashboard = () => {
                       )
                     }
                   />
-                  <label htmlFor={`sms-${notification.id}`}>SMS</label>
+                  <label htmlFor={`sms-${notification.id}`}>📱 SMS</label>
+                </div>
+                <div className="checkbox-group">
+                  <input
+                    type="checkbox"
+                    id={`push-${notification.id}`}
+                    checked={notification.notify_push !== false}
+                    onChange={() =>
+                      handleToggleNotification(
+                        notification.id,
+                        'notify_push',
+                        notification.notify_push !== false
+                      )
+                    }
+                  />
+                  <label htmlFor={`push-${notification.id}`}>🔔 Push</label>
                 </div>
               </div>
               <div className="actions">
