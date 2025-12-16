@@ -89,30 +89,44 @@ async function getVapidPublicKey(token) {
  * Subscribe to push notifications
  */
 export async function subscribeToPushNotifications(token) {
+  console.log('subscribeToPushNotifications: Starting...');
+  
   if (!isPushSupported()) {
     throw new Error('Push notifications are not supported');
   }
+  console.log('subscribeToPushNotifications: Push is supported');
 
   // Request permission first
+  console.log('subscribeToPushNotifications: Requesting permission...');
   const permission = await requestNotificationPermission();
+  console.log('subscribeToPushNotifications: Permission result:', permission);
+  
   if (permission !== 'granted') {
     throw new Error('Notification permission denied');
   }
 
   // Register service worker
+  console.log('subscribeToPushNotifications: Registering service worker...');
   const registration = await registerServiceWorker();
+  console.log('subscribeToPushNotifications: Service worker registered');
 
   // Get VAPID public key
+  console.log('subscribeToPushNotifications: Fetching VAPID key...');
   const vapidPublicKey = await getVapidPublicKey(token);
+  console.log('subscribeToPushNotifications: VAPID key received:', vapidPublicKey?.substring(0, 20) + '...');
+  
   const convertedKey = urlBase64ToUint8Array(vapidPublicKey);
 
   // Subscribe to push notifications
+  console.log('subscribeToPushNotifications: Subscribing to push manager...');
   const subscription = await registration.pushManager.subscribe({
     userVisibleOnly: true,
     applicationServerKey: convertedKey
   });
+  console.log('subscribeToPushNotifications: Push subscription created');
 
   // Send subscription to backend
+  console.log('subscribeToPushNotifications: Sending subscription to backend...');
   const response = await axios.post(
     `${API_URL}/push/subscribe`,
     subscription.toJSON(),
@@ -123,6 +137,7 @@ export async function subscribeToPushNotifications(token) {
       }
     }
   );
+  console.log('subscribeToPushNotifications: Backend response:', response.data);
 
   return response.data;
 }
@@ -166,7 +181,13 @@ export async function isPushSubscribed() {
   }
 
   try {
-    const registration = await navigator.serviceWorker.ready;
+    // Check if service worker is registered first
+    const registration = await navigator.serviceWorker.getRegistration();
+    if (!registration) {
+      console.log('No service worker registered yet');
+      return false;
+    }
+    
     const subscription = await registration.pushManager.getSubscription();
     return subscription !== null;
   } catch (error) {
@@ -184,7 +205,12 @@ export async function getPushSubscription() {
   }
 
   try {
-    const registration = await navigator.serviceWorker.ready;
+    // Check if service worker is registered first
+    const registration = await navigator.serviceWorker.getRegistration();
+    if (!registration) {
+      return null;
+    }
+    
     return await registration.pushManager.getSubscription();
   } catch (error) {
     console.error('Error getting push subscription:', error);

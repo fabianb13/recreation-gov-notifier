@@ -44,16 +44,18 @@ function PushNotificationToggle() {
     try {
       const token = localStorage.getItem('token');
       if (!token) {
-        throw new Error('Not authenticated');
+        throw new Error('Not authenticated - please log in first');
       }
 
       if (isSubscribed) {
         // Unsubscribe
+        console.log('Unsubscribing from push notifications...');
         await unsubscribeFromPushNotifications(token);
         setIsSubscribed(false);
         setSuccess('Push notifications disabled');
       } else {
         // Subscribe
+        console.log('Subscribing to push notifications...');
         await subscribeToPushNotifications(token);
         setIsSubscribed(true);
         setPermission('granted');
@@ -61,7 +63,25 @@ function PushNotificationToggle() {
       }
     } catch (err) {
       console.error('Error toggling push notifications:', err);
-      setError(err.message || 'Failed to update push notification settings');
+      console.error('Error details:', {
+        message: err.message,
+        response: err.response?.data,
+        status: err.response?.status
+      });
+      
+      let errorMessage = 'Failed to update push notification settings';
+      
+      if (err.message === 'Notification permission denied') {
+        errorMessage = 'You denied notification permission. Please allow notifications in your browser settings.';
+      } else if (err.response?.status === 401) {
+        errorMessage = 'Authentication failed. Please log out and log in again.';
+      } else if (err.response?.data?.detail) {
+        errorMessage = err.response.data.detail;
+      } else if (err.message) {
+        errorMessage = err.message;
+      }
+      
+      setError(errorMessage);
     } finally {
       setIsLoading(false);
     }
