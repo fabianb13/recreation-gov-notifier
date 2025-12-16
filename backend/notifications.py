@@ -43,11 +43,14 @@ class EmailService:
             return False
     
     def send_availability_notification(self, to_email: str, facility_name: str, 
-                                      available_sites: List[str], dates: str):
+                                      available_sites: List[str], dates: str, facility_id: str = None):
         """Send availability notification email"""
         subject = f"Campsite Available: {facility_name}"
         
         sites_list = "\n".join([f"<li>{site}</li>" for site in available_sites])
+        
+        # Build campground URL if facility_id is provided
+        campground_url = f"https://www.recreation.gov/camping/campgrounds/{facility_id}" if facility_id else "https://www.recreation.gov"
         
         body = f"""
         <html>
@@ -59,7 +62,7 @@ class EmailService:
             <ul>
                 {sites_list}
             </ul>
-            <p>Visit <a href="https://www.recreation.gov">Recreation.gov</a> to make your reservation.</p>
+            <p><a href="{campground_url}" style="display: inline-block; padding: 10px 20px; background-color: #007bff; color: white; text-decoration: none; border-radius: 5px; margin-top: 10px;">Book Now on Recreation.gov</a></p>
             <hr>
             <p style="color: gray; font-size: 12px;">
                 This is an automated notification from your Recreation.gov Campsite Notifier.
@@ -93,13 +96,15 @@ class SMSService:
             return False
     
     def send_availability_notification(self, to_number: str, facility_name: str, 
-                                      available_sites: List[str], dates: str):
+                                      available_sites: List[str], dates: str, facility_id: str = None):
         """Send availability notification SMS"""
         sites_str = ", ".join(available_sites[:3])  # Limit to 3 sites for SMS
         if len(available_sites) > 3:
             sites_str += f" and {len(available_sites) - 3} more"
         
-        message = f"Campsites available at {facility_name} for {dates}! Sites: {sites_str}. Book at recreation.gov"
+        # Include direct campground URL if available
+        url = f"recreation.gov/camping/campgrounds/{facility_id}" if facility_id else "recreation.gov"
+        message = f"Campsites available at {facility_name} for {dates}! Sites: {sites_str}. Book at {url}"
         
         return self.send_sms(to_number, message)
 
@@ -157,7 +162,7 @@ class WebPushService:
             return False
     
     def send_availability_notification(self, subscription_info: dict, facility_name: str, 
-                                      available_sites: List[str], dates: str):
+                                      available_sites: List[str], dates: str, facility_id: str = None):
         """Send availability notification via web push"""
         title = f"🏕️ Campsites Available!"
         
@@ -167,11 +172,14 @@ class WebPushService:
         
         body = f"{facility_name} has {len(available_sites)} site(s) available for {dates}. Sites: {sites_str}"
         
+        # Use direct campground URL if available
+        campground_url = f"https://www.recreation.gov/camping/campgrounds/{facility_id}" if facility_id else "https://www.recreation.gov"
+        
         return self.send_push_notification(
             subscription_info=subscription_info,
             title=title,
             body=body,
-            url="https://www.recreation.gov"
+            url=campground_url
         )
 
 

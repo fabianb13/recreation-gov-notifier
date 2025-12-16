@@ -274,6 +274,12 @@ const Dashboard = () => {
                       ? `${notification.last_available_count} site${notification.last_available_count !== 1 ? 's' : ''} available`
                       : 'Checking...'}
                   </div>
+                  {notification.available_dates && notification.available_dates.length > 0 && (
+                    <div style={{ fontSize: '0.875rem', color: 'var(--text-primary)', marginTop: '0.5rem', padding: '0.5rem', backgroundColor: 'rgba(40, 167, 69, 0.1)', borderRadius: '4px' }}>
+                      <strong>📅 Available dates:</strong> {notification.available_dates.slice(0, 5).map(date => new Date(date).toLocaleDateString()).join(', ')}
+                      {notification.available_dates.length > 5 && ` (+${notification.available_dates.length - 5} more)`}
+                    </div>
+                  )}
                   {notification.last_checked && (
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
                       Last checked: {new Date(notification.last_checked).toLocaleString()}

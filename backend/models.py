@@ -80,6 +80,8 @@ class NotificationRequestResponse(BaseModel):
     last_checked: Optional[datetime] = None
     last_notified: Optional[datetime] = None
     last_available_count: Optional[int] = None
+    available_sites: Optional[List[str]] = None
+    available_dates: Optional[List[str]] = None
 
 
 # Settings Models

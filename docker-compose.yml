@@ -52,6 +52,8 @@ services:
       - recreation-network
     environment:
       - REACT_APP_API_URL=http://localhost:8000
+      - HOST=0.0.0.0
+      - WATCHPACK_POLLING=true
     stdin_open: true
     tty: true
 

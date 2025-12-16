@@ -111,7 +111,8 @@ class AvailabilityScheduler:
                             user["email"],
                             request["facility_name"],
                             newly_available,
-                            dates
+                            dates,
+                            request["facility_id"]
                         )
                     
                     # Send SMS notification
@@ -120,7 +121,8 @@ class AvailabilityScheduler:
                             user["phone_number"],
                             request["facility_name"],
                             newly_available,
-                            dates
+                            dates,
+                            request["facility_id"]
                         )
                     
                     # Send web push notification
@@ -142,7 +144,8 @@ class AvailabilityScheduler:
                                 subscription_info=subscription_info,
                                 facility_name=request["facility_name"],
                                 available_sites=newly_available,
-                                dates=dates
+                                dates=dates,
+                                facility_id=request["facility_id"]
                             )
                             
                             # Track expired subscriptions for removal
