@@ -26,12 +26,15 @@ const Login = () => {
   };
 
   return (
-    <div className="container">
-      <div className="card" style={{ maxWidth: '400px', margin: '50px auto' }}>
-        <h2>Login</h2>
+    <div className="container" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '70vh' }}>
+      <div className="card" style={{ maxWidth: '450px', width: '100%' }}>
+        <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
+          <h2 style={{ marginBottom: '0.5rem', fontSize: '1.875rem' }}>🏕️ Welcome Back</h2>
+          <p style={{ color: 'var(--text-secondary)', margin: 0 }}>Sign in to your campsite tracker</p>
+        </div>
         <form onSubmit={handleSubmit}>
           <div className="form-group">
-            <label>Email</label>
+            <label>Email Address</label>
             <input
               type="email"
               value={email}
@@ -50,13 +53,14 @@ const Login = () => {
               placeholder="Enter your password"
             />
           </div>
-          {error && <div className="error">{error}</div>}
-          <button type="submit" className="btn btn-primary" disabled={loading} style={{ width: '100%' }}>
-            {loading ? 'Logging in...' : 'Login'}
+          {error && <div className="alert alert-error">⚠️ {error}</div>}
+          <button type="submit" className="btn btn-primary btn-lg" disabled={loading} style={{ width: '100%' }}>
+            {loading ? '⏳ Signing in...' : '🔐 Sign In'}
           </button>
         </form>
-        <p style={{ marginTop: '16px', textAlign: 'center' }}>
-          Don't have an account? <Link to="/register">Register here</Link>
+        <hr className="divider" style={{ margin: '1.5rem 0' }} />
+        <p style={{ textAlign: 'center', color: 'var(--text-secondary)', margin: 0 }}>
+          Don't have an account? <Link to="/register" style={{ color: 'var(--primary-color)', fontWeight: 600, textDecoration: 'none' }}>Create one here</Link>
         </p>
       </div>
     </div>

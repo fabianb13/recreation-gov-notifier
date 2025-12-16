@@ -122,11 +122,14 @@ const Dashboard = () => {
 
   return (
     <div className="container">
-      <h2>Dashboard</h2>
+      <div className="page-header">
+        <h2>🏕️ Campsite Availability Tracker</h2>
+        <p>Monitor your favorite campsites and get notified when spots become available</p>
+      </div>
 
       {/* Add New Campsite Form */}
       <div className="card">
-        <h3>Add New Campsite Notification</h3>
+        <h3>➕ Add Campsite Monitor</h3>
         <form onSubmit={handleSubmit}>
           <div className="form-group">
             <label>Campsite URL or ID</label>
@@ -201,19 +204,26 @@ const Dashboard = () => {
             />
             <label htmlFor="notify-sms">SMS Notifications</label>
           </div>
-          {error && <div className="error">{error}</div>}
-          {success && <div className="success">{success}</div>}
-          <button type="submit" className="btn btn-primary" disabled={submitting}>
-            {submitting ? 'Adding...' : 'Add Notification Request'}
+          {error && <div className="alert alert-error">⚠️ {error}</div>}
+          {success && <div className="alert alert-success">✓ {success}</div>}
+          <button type="submit" className="btn btn-primary btn-lg" disabled={submitting} style={{ marginTop: '0.5rem' }}>
+            {submitting ? '⏳ Adding...' : '➕ Start Monitoring'}
           </button>
         </form>
       </div>
 
       {/* Active Notifications List */}
       <div className="card">
-        <h3>Active Notification Requests ({notifications.length})</h3>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+          <h3 style={{ margin: 0 }}>📍 Your Monitored Campsites</h3>
+          <span className="badge badge-secondary">{notifications.length} active</span>
+        </div>
         {notifications.length === 0 ? (
-          <p style={{ color: '#666' }}>No active notification requests. Add one above to get started!</p>
+          <div className="empty-state">
+            <div className="empty-state-icon">🏕️</div>
+            <h3>No campsites being monitored</h3>
+            <p>Add your first campsite above to start receiving availability notifications</p>
+          </div>
         ) : (
           notifications.map((notification) => (
             <div key={notification.id} className="notification-item">
@@ -230,25 +240,33 @@ const Dashboard = () => {
               
               {/* Availability Status */}
               <div style={{ 
-                margin: '12px 0',
-                padding: '12px',
-                backgroundColor: notification.last_available_count > 0 ? '#d4edda' : '#f8f9fa',
-                border: `2px solid ${notification.last_available_count > 0 ? '#28a745' : '#dee2e6'}`,
-                borderRadius: '4px'
+                margin: '1rem 0',
+                padding: '1rem',
+                backgroundColor: notification.last_available_count > 0 ? 'var(--success-bg)' : 'var(--background)',
+                border: `2px solid ${notification.last_available_count > 0 ? 'var(--success-color)' : 'var(--border-color)'}`,
+                borderRadius: 'var(--radius-md)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '1rem'
               }}>
-                <div style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '4px' }}>
-                  Current Availability:
+                <div style={{ fontSize: '2rem' }}>
+                  {notification.last_available_count > 0 ? '✅' : '⏳'}
                 </div>
-                <div style={{ fontSize: '18px', fontWeight: 'bold', color: notification.last_available_count > 0 ? '#28a745' : '#6c757d' }}>
-                  {notification.last_available_count !== undefined && notification.last_available_count !== null
-                    ? `${notification.last_available_count} site${notification.last_available_count !== 1 ? 's' : ''} available`
-                    : 'Not checked yet'}
-                </div>
-                {notification.last_checked && (
-                  <div style={{ fontSize: '12px', color: '#6c757d', marginTop: '4px' }}>
-                    Last updated: {new Date(notification.last_checked).toLocaleString()}
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>
+                    Current Availability
                   </div>
-                )}
+                  <div style={{ fontSize: '1.25rem', fontWeight: 700, color: notification.last_available_count > 0 ? 'var(--success-color)' : 'var(--text-secondary)' }}>
+                    {notification.last_available_count !== undefined && notification.last_available_count !== null
+                      ? `${notification.last_available_count} site${notification.last_available_count !== 1 ? 's' : ''} available`
+                      : 'Checking...'}
+                  </div>
+                  {notification.last_checked && (
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
+                      Last checked: {new Date(notification.last_checked).toLocaleString()}
+                    </div>
+                  )}
+                </div>
               </div>
               
               <div className="meta">
@@ -291,16 +309,16 @@ const Dashboard = () => {
               </div>
               <div className="actions">
                 <button
-                  className="btn btn-primary"
+                  className="btn btn-secondary btn-sm"
                   onClick={() => loadAnalytics(notification.facility_id, notification.facility_name)}
                 >
-                  View Analytics
+                  📊 View Analytics
                 </button>
                 <button
-                  className="btn btn-danger"
+                  className="btn btn-danger btn-sm"
                   onClick={() => handleDelete(notification.id)}
                 >
-                  Delete
+                  🗑️ Remove
                 </button>
               </div>
             </div>
@@ -311,41 +329,49 @@ const Dashboard = () => {
       {/* Analytics Section */}
       {selectedFacility && (
         <div className="card">
-          <h3>Availability Analytics: {selectedFacility.name}</h3>
+          <h3>📊 Availability Analytics</h3>
+          <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
+            {selectedFacility.name}
+          </p>
           {loadingAnalytics ? (
-            <div className="loading">Loading analytics...</div>
+            <div className="loading">Loading analytics</div>
           ) : analyticsData && analyticsData.weekly_stats.length > 0 ? (
             <>
-              <p style={{ color: '#666', marginBottom: '20px' }}>
-                This chart shows the number of times campsites became available (reserved → available)
-                for each week of the year.
-              </p>
-              <ResponsiveContainer width="100%" height={300}>
+              <div className="alert alert-info" style={{ marginBottom: '1.5rem' }}>
+                ℹ️ This chart shows how many times campsites became available each week (reserved → available)
+              </div>
+              <ResponsiveContainer width="100%" height={350}>
                 <LineChart data={analyticsData.weekly_stats}>
-                  <CartesianGrid strokeDasharray="3 3" />
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" />
                   <XAxis
                     dataKey="week_number"
                     label={{ value: 'Week of Year', position: 'insideBottom', offset: -5 }}
+                    stroke="var(--text-secondary)"
                   />
                   <YAxis
                     label={{ value: 'Availability Changes', angle: -90, position: 'insideLeft' }}
+                    stroke="var(--text-secondary)"
                   />
                   <Tooltip />
                   <Legend />
                   <Line
                     type="monotone"
                     dataKey="availability_changes"
-                    stroke="#007bff"
+                    stroke="var(--primary-color)"
+                    strokeWidth={2}
                     name="Times Became Available"
+                    dot={{ fill: 'var(--primary-color)', r: 4 }}
+                    activeDot={{ r: 6 }}
                   />
                 </LineChart>
               </ResponsiveContainer>
             </>
           ) : (
-            <p style={{ color: '#666' }}>
-              No historical data available yet. Analytics will appear after the system has been monitoring
-              this campground for a while.
-            </p>
+            <div className="empty-state">
+              <div className="empty-state-icon">📈</div>
+              <h3>No analytics data yet</h3>
+              <p>Historical data will appear after monitoring this campground for a while</p>
+            </div>
           )}
         </div>
       )}
