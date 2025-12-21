@@ -1,6 +1,23 @@
 import axios from 'axios';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+// Use the current host for API calls to support mobile devices
+// Falls back to localhost for local development
+const getApiUrl = () => {
+  if (process.env.REACT_APP_API_URL && process.env.REACT_APP_API_URL !== 'http://localhost:8000') {
+    return process.env.REACT_APP_API_URL;
+  }
+  
+  // Use the current host's protocol and hostname with port 8000
+  if (typeof window !== 'undefined') {
+    const protocol = window.location.protocol;
+    const hostname = window.location.hostname;
+    return `${protocol}//${hostname}:8000`;
+  }
+  
+  return 'http://localhost:8000';
+};
+
+const API_URL = getApiUrl();
 
 const api = axios.create({
   baseURL: API_URL,
