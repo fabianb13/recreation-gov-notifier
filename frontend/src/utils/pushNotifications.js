@@ -1,6 +1,16 @@
 import axios from 'axios';
 
-const API_URL = 'http://localhost:8000/api';
+// Use dynamic API URL to support mobile devices
+const getApiUrl = () => {
+  if (typeof window !== 'undefined') {
+    const protocol = window.location.protocol;
+    const hostname = window.location.hostname;
+    return `${protocol}//${hostname}:8000/api`;
+  }
+  return 'http://localhost:8000/api';
+};
+
+const API_URL = getApiUrl();
 
 /**
  * URL-safe base64 encode for VAPID key
@@ -48,7 +58,41 @@ export async function registerServiceWorker() {
  * Check if push notifications are supported
  */
 export function isPushSupported() {
-  return 'serviceWorker' in navigator && 'PushManager' in window;
+  const hasServiceWorker = 'serviceWorker' in navigator;
+  const hasPushManager = 'PushManager' in window;
+  const isSecureContext = window.isSecureContext || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  
+  console.log('Push support check:', { hasServiceWorker, hasPushManager, isSecureContext });
+  
+  return hasServiceWorker && hasPushManager && isSecureContext;
+}
+
+/**
+ * Get detailed information about why push might not be supported
+ */
+export function getPushSupportInfo() {
+  const hasServiceWorker = 'serviceWorker' in navigator;
+  const hasPushManager = 'PushManager' in window;
+  const isSecureContext = window.isSecureContext || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  
+  let message = '';
+  if (!hasServiceWorker) {
+    message = 'Service Workers are not supported in this browser.';
+  } else if (!hasPushManager) {
+    message = 'Push notifications are not supported in this browser.';
+  } else if (!isSecureContext) {
+    message = 'Push notifications require HTTPS. Please access the site using https:// or use localhost for testing.';
+  } else {
+    message = 'Push notifications are supported!';
+  }
+  
+  return {
+    supported: hasServiceWorker && hasPushManager && isSecureContext,
+    hasServiceWorker,
+    hasPushManager,
+    isSecureContext,
+    message
+  };
 }
 
 /**
@@ -91,8 +135,11 @@ async function getVapidPublicKey(token) {
 export async function subscribeToPushNotifications(token) {
   console.log('subscribeToPushNotifications: Starting...');
   
-  if (!isPushSupported()) {
-    throw new Error('Push notifications are not supported');
+  const supportInfo = getPushSupportInfo();
+  console.log('subscribeToPushNotifications: Support info:', supportInfo);
+  
+  if (!supportInfo.supported) {
+    throw new Error(supportInfo.message);
   }
   console.log('subscribeToPushNotifications: Push is supported');
 

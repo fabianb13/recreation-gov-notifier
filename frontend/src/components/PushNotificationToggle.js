@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   isPushSupported,
+  getPushSupportInfo,
   getNotificationPermission,
   subscribeToPushNotifications,
   unsubscribeFromPushNotifications,
@@ -10,6 +11,7 @@ import {
 
 function PushNotificationToggle() {
   const [isSupported, setIsSupported] = useState(false);
+  const [supportMessage, setSupportMessage] = useState('');
   const [isSubscribed, setIsSubscribed] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
@@ -22,10 +24,11 @@ function PushNotificationToggle() {
 
   const checkPushSupport = async () => {
     setIsLoading(true);
-    const supported = isPushSupported();
-    setIsSupported(supported);
+    const supportInfo = getPushSupportInfo();
+    setIsSupported(supportInfo.supported);
+    setSupportMessage(supportInfo.message);
 
-    if (supported) {
+    if (supportInfo.supported) {
       const perm = getNotificationPermission();
       setPermission(perm);
       
@@ -113,6 +116,18 @@ function PushNotificationToggle() {
       <div className="alert alert-info">
         <span className="alert-icon">ℹ️</span>
         <span>Push notifications are not supported in your browser.</span>
+      </div>
+    );
+  }
+
+  if (!isSupported) {
+    return (
+      <div className="alert alert-error">
+        <span className="alert-icon">🚫</span>
+        <div>
+          <strong>Push notifications not available</strong>
+          <p>{supportMessage}</p>
+        </div>
       </div>
     );
   }
