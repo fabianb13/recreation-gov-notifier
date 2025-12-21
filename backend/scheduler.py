@@ -105,6 +105,15 @@ class AvailabilityScheduler:
                 if user and newly_available:
                     dates = f"{request['start_date']} to {request['end_date']}"
                     
+                    # Collect all available dates from all sites
+                    all_available_dates = []
+                    for site_id, site_info in available_sites.items():
+                        if site_info.get("has_availability", False) and site_info.get("available_dates"):
+                            all_available_dates.extend(site_info["available_dates"])
+                    
+                    # Deduplicate and sort dates
+                    unique_dates = sorted(list(set(all_available_dates)))
+                    
                     # Send email notification
                     if request.get("notify_email", True):
                         email_service.send_availability_notification(
@@ -112,7 +121,8 @@ class AvailabilityScheduler:
                             request["facility_name"],
                             newly_available,
                             dates,
-                            request["facility_id"]
+                            request["facility_id"],
+                            unique_dates
                         )
                     
                     # Send SMS notification
@@ -122,7 +132,8 @@ class AvailabilityScheduler:
                             request["facility_name"],
                             newly_available,
                             dates,
-                            request["facility_id"]
+                            request["facility_id"],
+                            unique_dates
                         )
                     
                     # Send web push notification
@@ -145,7 +156,8 @@ class AvailabilityScheduler:
                                 facility_name=request["facility_name"],
                                 available_sites=newly_available,
                                 dates=dates,
-                                facility_id=request["facility_id"]
+                                facility_id=request["facility_id"],
+                                available_dates=unique_dates
                             )
                             
                             # Track expired subscriptions for removal

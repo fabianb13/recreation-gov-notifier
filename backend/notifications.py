@@ -4,8 +4,84 @@ from email.mime.multipart import MIMEMultipart
 from twilio.rest import Client
 from pywebpush import webpush, WebPushException
 from config import settings
-from typing import List
+from typing import List, Optional
 import json
+from datetime import datetime, timedelta
+
+
+def format_available_dates(dates: List[str], max_dates: int = 10) -> str:
+    """Format available dates, grouping sequential dates together.
+    
+    Args:
+        dates: List of date strings in ISO format (YYYY-MM-DDTHH:MM:SSZ)
+        max_dates: Maximum number of dates/groups to include
+        
+    Returns:
+        Formatted string like "June 15-18, June 20, July 1-5"
+    """
+    if not dates:
+        return "No specific dates"
+    
+    # Parse and sort dates
+    parsed_dates = []
+    for date_str in dates:
+        try:
+            # Handle ISO format with or without milliseconds
+            if '.' in date_str:
+                dt = datetime.strptime(date_str.split('.')[0], "%Y-%m-%dT%H:%M:%S")
+            else:
+                dt = datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%SZ")
+            parsed_dates.append(dt)
+        except:
+            continue
+    
+    if not parsed_dates:
+        return "No specific dates"
+    
+    parsed_dates.sort()
+    
+    # Limit to first max_dates individual dates
+    if len(parsed_dates) > max_dates:
+        parsed_dates = parsed_dates[:max_dates]
+    
+    # Group sequential dates
+    groups = []
+    current_group = [parsed_dates[0]]
+    
+    for i in range(1, len(parsed_dates)):
+        # Check if this date is consecutive to the previous one
+        if (parsed_dates[i] - current_group[-1]).days == 1:
+            current_group.append(parsed_dates[i])
+        else:
+            groups.append(current_group)
+            current_group = [parsed_dates[i]]
+    
+    groups.append(current_group)
+    
+    # Format each group
+    formatted = []
+    for group in groups:
+        if len(group) == 1:
+            # Single date
+            formatted.append(group[0].strftime("%b %d"))
+        else:
+            # Range of dates
+            start = group[0]
+            end = group[-1]
+            if start.month == end.month:
+                # Same month: "June 15-18"
+                formatted.append(f"{start.strftime('%b %d')}-{end.strftime('%d')}")
+            else:
+                # Different months: "June 30-July 2"
+                formatted.append(f"{start.strftime('%b %d')}-{end.strftime('%b %d')}")
+    
+    result = ", ".join(formatted)
+    
+    # Add indicator if there are more dates
+    if len(dates) > max_dates:
+        result += f" (+{len(dates) - max_dates} more)"
+    
+    return result
 
 
 class EmailService:
@@ -43,7 +119,8 @@ class EmailService:
             return False
     
     def send_availability_notification(self, to_email: str, facility_name: str, 
-                                      available_sites: List[str], dates: str, facility_id: str = None):
+                                      available_sites: List[str], dates: str, facility_id: str = None,
+                                      available_dates: Optional[List[str]] = None):
         """Send availability notification email"""
         subject = f"Campsite Available: {facility_name}"
         
@@ -52,12 +129,17 @@ class EmailService:
         # Build campground URL if facility_id is provided
         campground_url = f"https://www.recreation.gov/camping/campgrounds/{facility_id}" if facility_id else "https://www.recreation.gov"
         
+        # Format available dates
+        formatted_dates = format_available_dates(available_dates or [], max_dates=10) if available_dates else None
+        dates_section = f"<p><strong>Available Dates:</strong> {formatted_dates}</p>" if formatted_dates else ""
+        
         body = f"""
         <html>
         <body>
             <h2>Good news! Campsites are now available!</h2>
             <p><strong>Campground:</strong> {facility_name}</p>
-            <p><strong>Dates:</strong> {dates}</p>
+            <p><strong>Search Period:</strong> {dates}</p>
+            {dates_section}
             <p><strong>Available Sites:</strong></p>
             <ul>
                 {sites_list}
@@ -96,15 +178,20 @@ class SMSService:
             return False
     
     def send_availability_notification(self, to_number: str, facility_name: str, 
-                                      available_sites: List[str], dates: str, facility_id: str = None):
+                                      available_sites: List[str], dates: str, facility_id: str = None,
+                                      available_dates: Optional[List[str]] = None):
         """Send availability notification SMS"""
         sites_str = ", ".join(available_sites[:3])  # Limit to 3 sites for SMS
         if len(available_sites) > 3:
             sites_str += f" and {len(available_sites) - 3} more"
         
+        # Format available dates (limit to 5 for SMS)
+        formatted_dates = format_available_dates(available_dates or [], max_dates=5) if available_dates else ""
+        dates_part = f" Dates: {formatted_dates}." if formatted_dates else "."
+        
         # Include direct campground URL if available
         url = f"recreation.gov/camping/campgrounds/{facility_id}" if facility_id else "recreation.gov"
-        message = f"Campsites available at {facility_name} for {dates}! Sites: {sites_str}. Book at {url}"
+        message = f"Campsites at {facility_name}!{dates_part} Sites: {sites_str}. {url}"
         
         return self.send_sms(to_number, message)
 
@@ -162,7 +249,8 @@ class WebPushService:
             return False
     
     def send_availability_notification(self, subscription_info: dict, facility_name: str, 
-                                      available_sites: List[str], dates: str, facility_id: str = None):
+                                      available_sites: List[str], dates: str, facility_id: str = None,
+                                      available_dates: Optional[List[str]] = None):
         """Send availability notification via web push"""
         title = f"🏕️ Campsites Available!"
         
@@ -170,7 +258,11 @@ class WebPushService:
         if len(available_sites) > 3:
             sites_str += f" and {len(available_sites) - 3} more"
         
-        body = f"{facility_name} has {len(available_sites)} site(s) available for {dates}. Sites: {sites_str}"
+        # Format available dates
+        formatted_dates = format_available_dates(available_dates or [], max_dates=7) if available_dates else ""
+        dates_info = f" Available: {formatted_dates}." if formatted_dates else ""
+        
+        body = f"{facility_name} has {len(available_sites)} site(s).{dates_info} Sites: {sites_str}"
         
         # Use direct campground URL if available
         campground_url = f"https://www.recreation.gov/camping/campgrounds/{facility_id}" if facility_id else "https://www.recreation.gov"
