@@ -7,6 +7,11 @@ from config import settings
 from typing import List, Optional
 import json
 from datetime import datetime, timedelta
+import base64
+import tempfile
+import os
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.backends import default_backend
 
 
 def format_available_dates(dates: List[str], max_dates: int = 10) -> str:
@@ -198,13 +203,48 @@ class SMSService:
 
 class WebPushService:
     def __init__(self):
-        self.vapid_private_key = settings.VAPID_PRIVATE_KEY
+        self.vapid_private_key_raw = settings.VAPID_PRIVATE_KEY
         self.vapid_public_key = settings.VAPID_PUBLIC_KEY
         try:
             self.vapid_claims = json.loads(settings.VAPID_CLAIMS)
         except:
             self.vapid_claims = {"sub": "mailto:noreply@example.com"}
-        self.enabled = bool(self.vapid_private_key and self.vapid_public_key)
+        self.enabled = bool(self.vapid_private_key_raw and self.vapid_public_key)
+        
+        # Convert base64 key to PEM file for pywebpush
+        self.vapid_private_key_path = None
+        if self.vapid_private_key_raw:
+            try:
+                # Add padding if needed
+                key_b64 = self.vapid_private_key_raw
+                padding = 4 - len(key_b64) % 4
+                if padding != 4:
+                    key_b64 += '=' * padding
+                
+                # Decode the base64 key to DER bytes
+                key_bytes = base64.urlsafe_b64decode(key_b64)
+                
+                # Load the private key from DER format
+                from cryptography.hazmat.primitives.serialization import load_der_private_key
+                private_key_obj = load_der_private_key(key_bytes, password=None, backend=default_backend())
+                
+                # Convert to PEM format and write to temp file
+                pem_data = private_key_obj.private_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PrivateFormat.PKCS8,
+                    encryption_algorithm=serialization.NoEncryption()
+                )
+                
+                # Write to a file that persists for the lifetime of the application
+                fd, self.vapid_private_key_path = tempfile.mkstemp(suffix='.pem', text=False)
+                with os.fdopen(fd, 'wb') as f:
+                    f.write(pem_data)
+                
+                print(f"VAPID private key loaded and saved to {self.vapid_private_key_path}")
+                
+            except Exception as e:
+                print(f"Error loading VAPID private key: {e}")
+                self.enabled = False
         
         if not self.enabled:
             print("Warning: Web Push notifications disabled - VAPID keys not configured")
@@ -231,7 +271,7 @@ class WebPushService:
             webpush(
                 subscription_info=subscription_info,
                 data=json.dumps(payload),
-                vapid_private_key=self.vapid_private_key,
+                vapid_private_key=self.vapid_private_key_path,
                 vapid_claims=self.vapid_claims
             )
             
