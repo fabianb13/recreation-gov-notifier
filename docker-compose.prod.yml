@@ -1,0 +1,121 @@
+version: '3.8'
+
+services:
+  traefik:
+    image: traefik:v2.10
+    container_name: traefik
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - CF_API_EMAIL=${CF_API_EMAIL}  # Optional: for Cloudflare DNS challenge
+      - CF_API_KEY=${CF_API_KEY}
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik/traefik.yml:/traefik.yml:ro
+      - ./traefik/acme.json:/acme.json
+      - ./traefik/config.yml:/config.yml:ro
+    networks:
+      - traefik-public
+      - recreation-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik.entrypoints=http"
+      - "traefik.http.routers.traefik.rule=Host(`traefik.highz.net`)"
+      - "traefik.http.middlewares.traefik-auth.basicauth.users=admin:$$2y$$05$$hashed_password_here"
+      - "traefik.http.middlewares.traefik-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.sslheader.headers.customrequestheaders.X-Forwarded-Proto=https"
+      - "traefik.http.routers.traefik.middlewares=traefik-https-redirect"
+      - "traefik.http.routers.traefik-secure.entrypoints=https"
+      - "traefik.http.routers.traefik-secure.rule=Host(`traefik.highz.net`)"
+      - "traefik.http.routers.traefik-secure.middlewares=traefik-auth"
+      - "traefik.http.routers.traefik-secure.tls=true"
+      - "traefik.http.routers.traefik-secure.tls.certresolver=cloudflare"
+      - "traefik.http.routers.traefik-secure.service=api@internal"
+
+  mongo:
+    image: mongo:7.0
+    container_name: recreation-mongo
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - recreation-network
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: recreation-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - MONGODB_URI=mongodb://mongo:27017
+    volumes:
+      - ./backend:/app
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks:
+      - recreation-network
+      - traefik-public
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.recreation-api.entrypoints=http"
+      - "traefik.http.routers.recreation-api.rule=Host(`basecamp.highz.net`) && PathPrefix(`/api`)"
+      - "traefik.http.middlewares.recreation-api-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.recreation-api.middlewares=recreation-api-https-redirect"
+      - "traefik.http.routers.recreation-api-secure.entrypoints=https"
+      - "traefik.http.routers.recreation-api-secure.rule=Host(`basecamp.highz.net`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.recreation-api-secure.tls=true"
+      - "traefik.http.routers.recreation-api-secure.tls.certresolver=cloudflare"
+      - "traefik.http.routers.recreation-api-secure.service=recreation-api"
+      - "traefik.http.services.recreation-api.loadbalancer.server.port=8000"
+      - "traefik.docker.network=traefik-public"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+      args:
+        - REACT_APP_API_URL=https://basecamp.highz.net
+    container_name: recreation-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    networks:
+      - traefik-public
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.recreation-app.entrypoints=http"
+      - "traefik.http.routers.recreation-app.rule=Host(`basecamp.highz.net`)"
+      - "traefik.http.middlewares.recreation-app-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.recreation-app-https-redirect.redirectscheme.permanent=true"
+      - "traefik.http.routers.recreation-app.middlewares=recreation-app-https-redirect"
+      - "traefik.http.routers.recreation-app-secure.entrypoints=https"
+      - "traefik.http.routers.recreation-app-secure.rule=Host(`basecamp.highz.net`)"
+      - "traefik.http.routers.recreation-app-secure.tls=true"
+      - "traefik.http.routers.recreation-app-secure.tls.certresolver=cloudflare"
+      - "traefik.http.routers.recreation-app-secure.service=recreation-app"
+      - "traefik.http.services.recreation-app.loadbalancer.server.port=80"
+      - "traefik.docker.network=traefik-public"
+
+volumes:
+  mongo-data:
+
+networks:
+  traefik-public:
+    external: true
+  recreation-network:
+    driver: bridge

@@ -1,0 +1,86 @@
+version: '3.8'
+
+services:
+  mongo:
+    image: mongo:7.0
+    container_name: recreation-mongo
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - recreation-network
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: recreation-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - MONGODB_URI=mongodb://mongo:27017
+    volumes:
+      - ./backend:/app
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks:
+      - recreation-network
+    ports:
+      - "8000:8000"  # Expose backend for Traefik proxy
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.recreation-api.entrypoints=http"
+      - "traefik.http.routers.recreation-api.rule=Host(`basecamp.highz.net`) && PathPrefix(`/api`)"
+      - "traefik.http.middlewares.recreation-api-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.recreation-api.middlewares=recreation-api-https-redirect"
+      - "traefik.http.routers.recreation-api-secure.entrypoints=https"
+      - "traefik.http.routers.recreation-api-secure.rule=Host(`basecamp.highz.net`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.recreation-api-secure.tls=true"
+      - "traefik.http.routers.recreation-api-secure.tls.certresolver=cloudflare"
+      - "traefik.http.routers.recreation-api-secure.service=recreation-api"
+      - "traefik.http.services.recreation-api.loadbalancer.server.port=8000"
+      - "traefik.http.services.recreation-api.loadbalancer.server.scheme=http"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+      args:
+        - REACT_APP_API_URL=https://basecamp.highz.net
+    container_name: recreation-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    networks:
+      - recreation-network
+    ports:
+      - "3000:80"  # Expose frontend for Traefik proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.recreation-app.entrypoints=http"
+      - "traefik.http.routers.recreation-app.rule=Host(`basecamp.highz.net`)"
+      - "traefik.http.middlewares.recreation-app-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.recreation-app-https-redirect.redirectscheme.permanent=true"
+      - "traefik.http.routers.recreation-app.middlewares=recreation-app-https-redirect"
+      - "traefik.http.routers.recreation-app-secure.entrypoints=https"
+      - "traefik.http.routers.recreation-app-secure.rule=Host(`basecamp.highz.net`)"
+      - "traefik.http.routers.recreation-app-secure.tls=true"
+      - "traefik.http.routers.recreation-app-secure.tls.certresolver=cloudflare"
+      - "traefik.http.routers.recreation-app-secure.service=recreation-app"
+      - "traefik.http.services.recreation-app.loadbalancer.server.port=80"
+      - "traefik.http.services.recreation-app.loadbalancer.server.scheme=http"
+
+volumes:
+  mongo-data:
+
+networks:
+  recreation-network:
+    driver: bridge

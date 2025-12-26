@@ -1,7 +1,11 @@
 import axios from 'axios';
 
-// Use dynamic API URL to support mobile devices
+// Use dynamic API URL to support mobile devices and production
 const getApiUrl = () => {
+  if (process.env.REACT_APP_API_URL) {
+    return `${process.env.REACT_APP_API_URL}/api`;
+  }
+  
   if (typeof window !== 'undefined') {
     const protocol = window.location.protocol;
     const hostname = window.location.hostname;
