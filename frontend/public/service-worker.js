@@ -30,7 +30,7 @@ self.addEventListener('push', (event) => {
       badge: data.badge || '/logo192.png',
       vibrate: data.vibrate || [200, 100, 200],
       data: {
-        url: data.data?.url || 'http://localhost:3000',
+        url: data.data?.url || 'https://basecamp.highz.net',
         dateOfArrival: Date.now(),
       },
       actions: [
@@ -67,7 +67,7 @@ self.addEventListener('notificationclick', (event) => {
   }
 
   // Default action or 'view' action - open the app
-  const urlToOpen = event.notification.data?.url || 'http://localhost:3000';
+  const urlToOpen = event.notification.data?.url || 'https://basecamp.highz.net';
 
   event.waitUntil(
     self.clients.matchAll({

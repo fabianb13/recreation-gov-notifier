@@ -565,7 +565,7 @@ async def test_push_notification(current_user: dict = Depends(get_current_user))
             subscription_info=subscription_info,
             title="🏕️ Test Notification",
             body="Your push notifications are working! You'll receive alerts when campsites become available.",
-            url="http://localhost:3000"
+            url="https://basecamp.highz.net"
         )
         
         if result == "expired":
