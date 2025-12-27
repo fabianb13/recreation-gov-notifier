@@ -7,7 +7,17 @@ import re
 import time
 import random
 from rate_limiter import rate_limiter
+from fake_useragent import UserAgent
 
+STANDARD_HEADERS: Dict[str, str] = {
+    "Accept-Encoding": "gzip, deflate, br",
+    "Accept-Language": "en-US,en;q=0.9,la;q=0.8",
+    "Cache-Control": "max-age=0",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+}
+
+API_REFERRERS: Dict[str, str] = {"Referer": "https://www.recreation.gov/"}
 
 class RecreationGovAPI:
     BASE_URL = "https://www.recreation.gov"
@@ -76,7 +86,7 @@ class RecreationGovAPI:
             print(f"Rate limiter: waited {wait_time:.2f}s (tokens available: {rate_limiter.get_available_tokens():.1f})")
         self.request_count += 1
     
-    def _make_request_with_retry(self, url: str, params: dict = None, timeout: int = 15) -> Optional[requests.Response]:
+    def _make_request_with_retry(self, url: str, params: dict = None, timeout: int = 30) -> Optional[requests.Response]:
         """Make HTTP request with retry logic, exponential backoff, and rate limiting"""
         for attempt in range(self.MAX_RETRIES):
             try:
@@ -84,6 +94,11 @@ class RecreationGovAPI:
                 self._acquire_rate_limit_token()
                 
                 # Make the request
+                # BUILD THE HEADERS EXPECTED FROM THE API
+                user_agent = {"User-Agent": UserAgent(browsers=["chrome"]).random}
+                headers = STANDARD_HEADERS.copy()
+                headers.update(user_agent)
+                headers.update(API_REFERRERS)
                 response = requests.get(url, params=params, headers=self.headers, timeout=timeout)
                 
                 # Handle rate limiting (429)
