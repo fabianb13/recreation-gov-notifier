@@ -5,6 +5,12 @@ from recreation_api import recreation_api
 from notifications import email_service, sms_service, web_push_service
 from config import settings
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
+import functools
+
+
+# Thread pool for running synchronous operations without blocking the event loop
+executor = ThreadPoolExecutor(max_workers=3)
 
 
 class AvailabilityScheduler:
@@ -36,11 +42,16 @@ class AvailabilityScheduler:
         facility_id = request["facility_id"]
         
         try:
-            # Get current availability
-            availability_data = recreation_api.check_availability(
-                facility_id,
-                request["start_date"],
-                request["end_date"]
+            # Run the synchronous API call in a thread pool to avoid blocking
+            loop = asyncio.get_event_loop()
+            availability_data = await loop.run_in_executor(
+                executor,
+                functools.partial(
+                    recreation_api.check_availability,
+                    facility_id,
+                    request["start_date"],
+                    request["end_date"]
+                )
             )
             
             if not availability_data.get("success", False):
@@ -50,13 +61,17 @@ class AvailabilityScheduler:
             campsites_data = availability_data.get("campsites", {})
             total_sites = availability_data.get("count", 0)
             
-            # Parse availability for date range
+            # Parse availability for date range (also run in executor as it may be CPU intensive)
             min_nights = request.get("min_nights", 1)
-            available_sites = recreation_api.get_campsite_availability_for_dates(
-                campsites_data,
-                request["start_date"],
-                request["end_date"],
-                min_nights=min_nights
+            available_sites = await loop.run_in_executor(
+                executor,
+                functools.partial(
+                    recreation_api.get_campsite_availability_for_dates,
+                    campsites_data,
+                    request["start_date"],
+                    request["end_date"],
+                    min_nights=min_nights
+                )
             )
             
             # Filter to only sites with availability
