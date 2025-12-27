@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     VAPID_PUBLIC_KEY: Optional[str] = None
     VAPID_CLAIMS: Optional[str] = None
 
+    # SOCKS5 Proxy Configuration
+    PROXY_USERNAME: str
+    PROXY_PASSWORD: str
+
     class Config:
         env_file = ".env"
         case_sensitive = True

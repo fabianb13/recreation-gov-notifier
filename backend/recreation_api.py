@@ -1,12 +1,12 @@
 import requests
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Tuple
 from datetime import datetime, timedelta
 from dateutil import rrule
 from config import settings
 import re
 import time
 import random
-from rate_limiter import rate_limiter
+from proxy_manager import proxy_manager, ProxyInfo
 from fake_useragent import UserAgent
 
 STANDARD_HEADERS: Dict[str, str] = {
@@ -24,7 +24,7 @@ class RecreationGovAPI:
     AVAILABILITY_ENDPOINT = "/api/camps/availability/campground/{}/month"
     CAMPGROUND_ENDPOINT = "/api/camps/campgrounds/{}"
     
-    # Use token bucket rate limiter (global, thread-safe)
+    # Use SOCKS5 proxies with per-proxy rate limiting
     MAX_RETRIES = 3
     INITIAL_RETRY_DELAY = 5  # Increased from 2 to 5 seconds
     
@@ -79,27 +79,39 @@ class RecreationGovAPI:
         except Exception:
             return date_str
     
-    def _acquire_rate_limit_token(self):
-        """Acquire a token from the rate limiter before making a request"""
-        wait_time = rate_limiter.acquire_with_wait(tokens=1)
+    def _acquire_proxy_with_rate_limit(self) -> Optional[Tuple[ProxyInfo, Dict[str, str]]]:
+        """Acquire proxy and rate limit token before making a request"""
+        result = proxy_manager.acquire_with_proxy()
+        if not result:
+            print(f"❌ No proxies available")
+            return None
+        
+        proxy, wait_time = result
         if wait_time > 0.1:
-            print(f"Rate limiter: waited {wait_time:.2f}s (tokens available: {rate_limiter.get_available_tokens():.1f})")
+            print(f"Rate limiter: waited {wait_time:.2f}s for proxy {proxy.ip} (tokens: {proxy.rate_limiter.get_available_tokens():.1f})")
+        
         self.request_count += 1
+        return proxy, proxy.get_proxies_dict()
     
     def _make_request_with_retry(self, url: str, params: dict = None, timeout: int = 30) -> Optional[requests.Response]:
-        """Make HTTP request with retry logic, exponential backoff, and rate limiting"""
+        """Make HTTP request with retry logic, exponential backoff, SOCKS5 proxy, and per-proxy rate limiting"""
         for attempt in range(self.MAX_RETRIES):
             try:
-                # Acquire token from rate limiter (blocks until available)
-                self._acquire_rate_limit_token()
+                # Acquire proxy and rate limit token (blocks until available)
+                proxy_result = self._acquire_proxy_with_rate_limit()
+                if not proxy_result:
+                    print(f"❌ Failed to acquire proxy for request")
+                    return None
                 
-                # Make the request
+                proxy, proxies_dict = proxy_result
+                
+                # Make the request through SOCKS5 proxy
                 # BUILD THE HEADERS EXPECTED FROM THE API
                 user_agent = {"User-Agent": UserAgent(browsers=["chrome"]).random}
                 headers = STANDARD_HEADERS.copy()
                 headers.update(user_agent)
                 headers.update(API_REFERRERS)
-                response = requests.get(url, params=params, headers=self.headers, timeout=timeout)
+                response = requests.get(url, params=params, headers=self.headers, proxies=proxies_dict, timeout=timeout)
                 
                 # Handle rate limiting (429)
                 if response.status_code == 429:
@@ -246,7 +258,13 @@ class RecreationGovAPI:
             print(f"🔍 Checking availability for facility {facility_id} from {start_date} to {end_dt.strftime('%Y-%m-%d')}")
             if original_end_dt != end_dt:
                 print(f"  (Original end date {original_end_dt.strftime('%Y-%m-%d')} capped due to API limit)")
-            print(f"📅 Need to query {len(months)} month(s) - Rate limiter has {rate_limiter.get_available_tokens():.1f} tokens available")
+            
+            # Show proxy pool stats
+            proxy_stats = proxy_manager.get_stats()
+            if proxy_stats.get("initialized"):
+                print(f"📅 Need to query {len(months)} month(s) - Using {proxy_stats['total_proxies']} SOCKS5 proxy/proxies")
+            else:
+                print(f"📅 Need to query {len(months)} month(s) - Proxies not initialized")
             
             # Collect data from all months
             all_campsites_data = {}
@@ -309,7 +327,11 @@ class RecreationGovAPI:
                 }
             
             print(f"✅ Successfully retrieved data for {len(all_campsites_data)} campsites")
-            print(f"📊 Rate limiter tokens remaining: {rate_limiter.get_available_tokens():.1f}")
+            
+            # Show proxy pool stats after requests
+            proxy_stats = proxy_manager.get_stats()
+            if proxy_stats.get("initialized"):
+                print(f"📊 Proxy pool status: {proxy_stats['total_requests']} total requests across {proxy_stats['total_proxies']} proxy/proxies")
             
             result = {
                 "facility_id": facility_id,

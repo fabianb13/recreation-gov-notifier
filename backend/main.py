@@ -16,6 +16,7 @@ from auth import create_user, authenticate_user, create_access_token, decode_acc
 from recreation_api import recreation_api, RecreationGovAPI
 from scheduler import scheduler
 from config import settings
+from proxy_manager import proxy_manager
 
 
 # Lifespan context manager for startup/shutdown
@@ -23,6 +24,17 @@ from config import settings
 async def lifespan(app: FastAPI):
     # Startup
     await connect_to_mongo()
+    
+    # Initialize SOCKS5 proxy pool
+    print("\n" + "="*80)
+    print("Initializing SOCKS5 Proxy Pool...")
+    print("="*80)
+    proxy_initialized = proxy_manager.initialize()
+    if not proxy_initialized:
+        print("❌ WARNING: Failed to initialize proxy pool. Recreation.gov API calls may fail.")
+    else:
+        print("✅ Proxy pool ready for Recreation.gov API requests\n")
+    
     scheduler.start()
     yield
     # Shutdown
