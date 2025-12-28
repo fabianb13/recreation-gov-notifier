@@ -240,7 +240,23 @@ const Dashboard = () => {
         ) : (
           notifications.map((notification) => (
             <div key={notification.id} className="notification-item">
-              <h3>{notification.facility_name}</h3>
+              <h3>
+                <a 
+                  href={`https://www.recreation.gov/camping/campgrounds/${notification.facility_id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    color: 'inherit',
+                    textDecoration: 'none',
+                    borderBottom: '2px solid var(--primary-color)',
+                    transition: 'color 0.2s'
+                  }}
+                  onMouseEnter={(e) => e.target.style.color = 'var(--primary-color)'}
+                  onMouseLeave={(e) => e.target.style.color = 'inherit'}
+                >
+                  {notification.facility_name}
+                </a>
+              </h3>
               <div className="meta">
                 <strong>Facility ID:</strong> {notification.facility_id}
               </div>
