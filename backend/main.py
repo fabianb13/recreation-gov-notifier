@@ -5,6 +5,8 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from bson import ObjectId
 from typing import List, Optional
+import asyncio
+import functools
 
 from database import connect_to_mongo, close_mongo_connection, get_database
 from models import (
@@ -14,7 +16,7 @@ from models import (
 )
 from auth import create_user, authenticate_user, create_access_token, decode_access_token
 from recreation_api import recreation_api, RecreationGovAPI
-from scheduler import scheduler
+from scheduler import scheduler, executor
 from config import settings
 from proxy_manager import proxy_manager
 
@@ -155,12 +157,20 @@ async def create_notification_request(
     
     # Get facility name if not provided
     if not request.facility_name:
-        facility_name = recreation_api.get_facility_name(facility_id)
+        loop = asyncio.get_event_loop()
+        facility_name = await loop.run_in_executor(
+            executor,
+            functools.partial(recreation_api.get_facility_name, facility_id)
+        )
     else:
         facility_name = request.facility_name
     
-    # Verify facility exists by attempting to get its info
-    facility = recreation_api.get_facility(facility_id)
+    # Verify facility exists by attempting to get its info (non-blocking)
+    loop = asyncio.get_event_loop()
+    facility = await loop.run_in_executor(
+        executor,
+        functools.partial(recreation_api.get_facility, facility_id)
+    )
     if not facility:
         print(f"Warning: Could not verify facility {facility_id}, but proceeding with notification request")
         # Don't fail here - the facility might be valid but the info endpoint might have issues
