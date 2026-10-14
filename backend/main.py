@@ -329,16 +329,24 @@ async def delete_notification_request(
     """Delete a notification request"""
     db = get_database()
     
-    result = await db.notification_requests.delete_one({
+    deleted = await db.notification_requests.find_one_and_delete({
         "_id": ObjectId(notification_id),
         "user_id": current_user["_id"]
     })
     
-    if result.deleted_count == 0:
+    if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Notification request not found"
         )
+    
+    await db.availability_history.delete_many({"notification_request_id": deleted["_id"]})
+    # Legacy records are only reachable through a search for the same campground
+    if not await db.notification_requests.find_one({"facility_id": deleted["facility_id"]}):
+        await db.availability_history.delete_many({
+            "notification_request_id": {"$exists": False},
+            "facility_id": deleted["facility_id"]
+        })
     
     return {"message": "Notification request deleted"}
 
