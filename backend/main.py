@@ -16,7 +16,7 @@ from models import (
 )
 from auth import create_user, authenticate_user, create_access_token, decode_access_token
 from recreation_api import recreation_api, RecreationGovAPI
-from scheduler import scheduler, executor
+from scheduler import scheduler
 from config import settings
 from proxy_manager import proxy_manager
 
@@ -159,7 +159,7 @@ async def create_notification_request(
     if not request.facility_name:
         loop = asyncio.get_event_loop()
         facility_name = await loop.run_in_executor(
-            executor,
+            None,
             functools.partial(recreation_api.get_facility_name, facility_id)
         )
     else:
@@ -168,7 +168,7 @@ async def create_notification_request(
     # Verify facility exists by attempting to get its info (non-blocking)
     loop = asyncio.get_event_loop()
     facility = await loop.run_in_executor(
-        executor,
+        None,
         functools.partial(recreation_api.get_facility, facility_id)
     )
     if not facility:
@@ -236,43 +236,8 @@ async def get_notification_requests(response: Response, current_user: dict = Dep
         {"user_id": current_user["_id"]}
     ).to_list(length=None)
     
-    # Get all unique facility IDs
-    facility_ids = [req["facility_id"] for req in requests]
-    
-    # Fetch latest availability history for all facilities in a single aggregation query
-    # This reduces N+1 query problem
-    pipeline = [
-        {"$match": {"facility_id": {"$in": facility_ids}}},
-        {"$sort": {"facility_id": 1, "timestamp": -1}},
-        {"$group": {
-            "_id": "$facility_id",
-            "latest_doc": {"$first": "$$ROOT"}
-        }}
-    ]
-    
-    history_cursor = db.availability_history.aggregate(pipeline)
-    history_map = {}
-    async for doc in history_cursor:
-        history_map[doc["_id"]] = doc["latest_doc"]
-    
-    # Build response list
     result_list = []
     for req in requests:
-        available_sites = None
-        available_dates = None
-        
-        latest_history = history_map.get(req["facility_id"])
-        if latest_history and latest_history.get("full_data"):
-            # Extract available dates from all sites in full_data
-            all_available_dates = []
-            for site_id, site_data in latest_history["full_data"].items():
-                if site_data.get("available_dates"):
-                    all_available_dates.extend(site_data["available_dates"])
-            
-            # Deduplicate and sort dates
-            available_dates = sorted(list(set(all_available_dates)))
-            available_sites = latest_history.get("available_sites", [])
-        
         result_list.append(
             NotificationRequestResponse(
                 id=str(req["_id"]),
@@ -288,8 +253,8 @@ async def get_notification_requests(response: Response, current_user: dict = Dep
                 last_checked=req.get("last_checked"),
                 last_notified=req.get("last_notified"),
                 last_available_count=req.get("last_available_count"),
-                available_sites=available_sites,
-                available_dates=available_dates
+                available_sites=req.get("available_sites"),
+                available_dates=req.get("available_dates")
             )
         )
     
@@ -428,9 +393,11 @@ async def get_facility_analytics(
         )
     
     # Get availability history
-    history = await db.availability_history.find(
-        {"facility_id": facility_id}
-    ).sort("timestamp", 1).to_list(length=None)
+    # Records from before per-search tracking only have facility_id
+    history = await db.availability_history.find({"$or": [
+        {"notification_request_id": notification["_id"]},
+        {"notification_request_id": {"$exists": False}, "facility_id": facility_id}
+    ]}).sort("timestamp", 1).to_list(length=None)
     
     # Calculate weekly statistics
     weekly_changes = {}

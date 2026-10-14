@@ -15,6 +15,15 @@ async def connect_to_mongo():
     await db.users.create_index("email", unique=True)
     await db.notification_requests.create_index([("user_id", 1), ("facility_id", 1)])
     await db.availability_history.create_index([("facility_id", 1), ("timestamp", -1)])
+    await db.availability_history.create_index([("notification_request_id", 1), ("timestamp", -1)])
+    
+    # full_data is no longer stored; drop it from older records
+    result = await db.availability_history.update_many(
+        {"full_data": {"$exists": True}},
+        {"$unset": {"full_data": ""}}
+    )
+    if result.modified_count:
+        print(f"🧹 Removed full_data from {result.modified_count} availability history records")
 
 
 async def close_mongo_connection():

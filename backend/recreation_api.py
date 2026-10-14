@@ -10,7 +10,9 @@ from proxy_manager import proxy_manager, ProxyInfo
 from fake_useragent import UserAgent
 
 STANDARD_HEADERS: Dict[str, str] = {
-    "Accept-Encoding": "gzip, deflate, br",
+    "Accept": "application/json, text/plain, */*",
+    # No "br": requests can't decode brotli without an extra package
+    "Accept-Encoding": "gzip, deflate",
     "Accept-Language": "en-US,en;q=0.9,la;q=0.8",
     "Cache-Control": "max-age=0",
     "Connection": "keep-alive",
@@ -29,14 +31,8 @@ class RecreationGovAPI:
     INITIAL_RETRY_DELAY = 5  # Increased from 2 to 5 seconds
     
     def __init__(self):
-        # Recreation.gov public API doesn't require API key for availability checks
-        # Use a realistic User-Agent to avoid being blocked
-        self.headers = {
-            "User-Agent": "RecreationGovNotifier/1.0 (Campsite Availability Monitoring Service)",
-            "Accept": "application/json",
-            "Accept-Encoding": "gzip, deflate"
-        }
         self.request_count = 0
+        self.user_agent = UserAgent(browsers=["chrome"])
     
     def parse_facility_id_from_url(self, url: str) -> Optional[str]:
         """
@@ -107,11 +103,16 @@ class RecreationGovAPI:
                 
                 # Make the request through SOCKS5 proxy
                 # BUILD THE HEADERS EXPECTED FROM THE API
-                user_agent = {"User-Agent": UserAgent(browsers=["chrome"]).random}
+                user_agent = {"User-Agent": self.user_agent.random}
                 headers = STANDARD_HEADERS.copy()
                 headers.update(user_agent)
                 headers.update(API_REFERRERS)
-                response = requests.get(url, params=params, headers=self.headers, proxies=proxies_dict, timeout=timeout)
+                try:
+                    response = requests.get(url, params=params, headers=headers, proxies=proxies_dict, timeout=timeout)
+                except requests.exceptions.RequestException:
+                    proxy_manager.report_failure(proxy)
+                    raise
+                proxy_manager.report_success(proxy)
                 
                 # Handle rate limiting (429)
                 if response.status_code == 429:
@@ -133,7 +134,7 @@ class RecreationGovAPI:
                         jitter = random.uniform(0, 2)
                         total_wait = wait_time + jitter
                         print(f"⏳ Waiting {total_wait:.2f} seconds before retry {attempt + 1}/{self.MAX_RETRIES}")
-                        print(f"💡 Current rate limiter tokens: {rate_limiter.get_available_tokens():.1f}")
+                        print(f"💡 Proxy {proxy.ip} rate limiter tokens: {proxy.rate_limiter.get_available_tokens():.1f}")
                         time.sleep(total_wait)
                         # Give rate limiter time to refill
                         time.sleep(2)
@@ -242,6 +243,20 @@ class RecreationGovAPI:
                     "beyond_api_limit": True
                 }
             
+            # Past dates can't be booked and the API rejects past months with 400
+            today_date = datetime(today.year, today.month, today.day)
+            if end_dt < today_date:
+                print(f"⏭️ Skipping facility {facility_id}: date range {start_date} to {end_date} is entirely in the past")
+                return {
+                    "facility_id": facility_id,
+                    "count": 0,
+                    "campsites": {},
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "success": True,
+                    "date_range_expired": True
+                }
+            start_dt = max(start_dt, today_date)
+            
             # Get first of month for start date
             start_of_month = datetime(start_dt.year, start_dt.month, 1)
             
@@ -255,14 +270,14 @@ class RecreationGovAPI:
                 months = months[:MAX_MONTHS_PER_QUERY]
                 end_dt = months[-1]
             
-            print(f"🔍 Checking availability for facility {facility_id} from {start_date} to {end_dt.strftime('%Y-%m-%d')}")
+            print(f"🔍 Checking availability for facility {facility_id} from {start_dt.strftime('%Y-%m-%d')} to {end_dt.strftime('%Y-%m-%d')}")
             if original_end_dt != end_dt:
                 print(f"  (Original end date {original_end_dt.strftime('%Y-%m-%d')} capped due to API limit)")
             
             # Show proxy pool stats
             proxy_stats = proxy_manager.get_stats()
             if proxy_stats.get("initialized"):
-                print(f"📅 Need to query {len(months)} month(s) - Using {proxy_stats['total_proxies']} SOCKS5 proxy/proxies")
+                print(f"📅 Need to query {len(months)} month(s) - Using {proxy_stats['healthy_proxies']}/{proxy_stats['total_proxies']} healthy SOCKS5 proxies")
             else:
                 print(f"📅 Need to query {len(months)} month(s) - Proxies not initialized")
             
@@ -278,12 +293,18 @@ class RecreationGovAPI:
                 
                 response = self._make_request_with_retry(url, params=params, timeout=15)
                 
-                if not response:
-                    print(f"❌ Error: No response received for {url}")
-                    # If we get no response, wait longer before continuing
-                    print(f"⏸️ Pausing 10 seconds before continuing...")
-                    time.sleep(10)
-                    continue
+                # A 4xx Response is falsy, so compare against None explicitly
+                if response is None:
+                    # None only happens when no healthy proxy is available; partial data could trigger false alerts
+                    print(f"🛑 No healthy proxies available. Skipping facility {facility_id} until next cycle.")
+                    return {
+                        "facility_id": facility_id,
+                        "count": 0,
+                        "campsites": {},
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "error": "No healthy proxies available",
+                        "success": False
+                    }
                 
                 if response.status_code == 429:
                     print(f"🛑 Rate limit exceeded even after retries. Skipping remaining months to avoid further rate limiting.")
@@ -379,14 +400,13 @@ class RecreationGovAPI:
         """
         available_campsites = {}
         
-        # Generate list of dates in the range (formatted for comparison with API response)
-        start_dt = datetime.strptime(start_date, "%Y-%m-%d")
-        end_dt = datetime.strptime(end_date, "%Y-%m-%d")
-        num_days = (end_dt - start_dt).days
-        
-        # Calculate API limit (2 years from today)
+        # Only dates from today through the API's 2-year window can have availability
         today = datetime.now()
+        today_date = datetime(today.year, today.month, today.day)
         max_api_date = today + timedelta(days=730)
+        start_dt = max(datetime.strptime(start_date, "%Y-%m-%d"), today_date)
+        end_dt = min(datetime.strptime(end_date, "%Y-%m-%d"), max_api_date + timedelta(days=1))
+        num_days = (end_dt - start_dt).days
         
         # Create ordered list of dates to check (excluding end_date since it's the checkout day)
         # Format as YYYY-MM-DDTHH:MM:SSZ to match API response format (no milliseconds)
@@ -408,15 +428,7 @@ class RecreationGovAPI:
             current_sequence = []
             
             for check_date in date_range:
-                # Check if this date is beyond the API limit
-                check_dt = datetime.strptime(check_date, "%Y-%m-%dT%H:%M:%SZ")
-                is_beyond_api_limit = check_dt > max_api_date
-                
-                # Dates beyond API limit are assumed unavailable
-                if is_beyond_api_limit:
-                    status = "Not Available"
-                else:
-                    status = availabilities.get(check_date, "Not Available")
+                status = availabilities.get(check_date, "Not Available")
                 
                 if status == "Available":
                     consecutive_nights += 1

@@ -29,6 +29,9 @@ PROXY_VERIFY_URL = "https://api.ipify.org"
 RATE_LIMIT_PER_PROXY = 35.0  # requests per minute
 RATE_LIMIT_CAPACITY = 35  # token bucket capacity
 
+MAX_CONSECUTIVE_FAILURES = 3
+REVERIFY_INTERVAL_SECONDS = 900
+
 
 class ProxyInfo:
     """Information about a single proxy"""
@@ -40,9 +43,11 @@ class ProxyInfo:
         self.latency_ms: Optional[float] = None
         self.verified: bool = False
         self.external_ip: Optional[str] = None
+        self.healthy: bool = True
+        self.consecutive_failures: int = 0
         
         # Per-proxy rate limiter (35 requests per minute)
-        self.rate_limiter = TokenBucketRateLimiter(rate=RATE_LIMIT_PER_PROXY / 60.0, capacity=RATE_LIMIT_CAPACITY)
+        self.rate_limiter = TokenBucketRateLimiter(rate=RATE_LIMIT_PER_PROXY, capacity=RATE_LIMIT_CAPACITY)
     
     def get_proxy_url(self) -> str:
         """Get the SOCKS5 proxy URL for requests library"""
@@ -249,9 +254,39 @@ class ProxyManager:
             return None
         
         with self.lock:
-            proxy = next(self.proxy_cycle)
-            self.total_requests += 1
-            return proxy
+            for _ in range(len(self.proxies)):
+                proxy = next(self.proxy_cycle)
+                if proxy.healthy:
+                    self.total_requests += 1
+                    return proxy
+        
+        print(f"⚠️ All {len(self.proxies)} proxies are benched")
+        return None
+    
+    def report_success(self, proxy: ProxyInfo):
+        with self.lock:
+            proxy.consecutive_failures = 0
+    
+    def report_failure(self, proxy: ProxyInfo):
+        with self.lock:
+            proxy.consecutive_failures += 1
+            if proxy.healthy and proxy.consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                proxy.healthy = False
+                healthy_count = sum(1 for p in self.proxies if p.healthy)
+                print(f"🚫 Benched proxy {proxy.ip} after {proxy.consecutive_failures} consecutive failures ({healthy_count}/{len(self.proxies)} healthy)")
+    
+    def reverify_benched(self):
+        """Re-verify benched proxies and return working ones to the pool"""
+        benched = [p for p in self.proxies if not p.healthy]
+        if not benched:
+            return
+        print(f"🔄 Re-verifying {len(benched)} benched proxy/proxies...")
+        for proxy in benched:
+            if self._verify_proxy(proxy, timeout=2):
+                with self.lock:
+                    proxy.healthy = True
+                    proxy.consecutive_failures = 0
+                print(f"✅ Proxy {proxy.ip} restored to pool")
     
     def acquire_with_proxy(self) -> Optional[Tuple[ProxyInfo, float]]:
         """
@@ -277,6 +312,7 @@ class ProxyManager:
         stats = {
             "initialized": True,
             "total_proxies": len(self.proxies),
+            "healthy_proxies": sum(1 for p in self.proxies if p.healthy),
             "total_requests": self.total_requests,
             "proxies": []
         }
@@ -286,6 +322,7 @@ class ProxyManager:
                 "ip": proxy.ip,
                 "external_ip": proxy.external_ip,
                 "latency_ms": proxy.latency_ms,
+                "healthy": proxy.healthy,
                 "available_tokens": proxy.rate_limiter.get_available_tokens()
             })
         

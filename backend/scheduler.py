@@ -4,13 +4,14 @@ from database import get_database
 from recreation_api import recreation_api
 from notifications import email_service, sms_service, web_push_service
 from config import settings
+from proxy_manager import proxy_manager, REVERIFY_INTERVAL_SECONDS
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import functools
 
 
 # Thread pool for running synchronous operations without blocking the event loop
-executor = ThreadPoolExecutor(max_workers=3)
+executor = ThreadPoolExecutor(max_workers=8)
 
 
 class AvailabilityScheduler:
@@ -29,35 +30,49 @@ class AvailabilityScheduler:
             
             print(f"Checking {len(requests)} notification requests...")
             
+            by_facility = {}
             for request in requests:
-                await self.check_notification_request(request)
+                by_facility.setdefault(request["facility_id"], []).append(request)
+            
+            await asyncio.gather(*(
+                self.check_facility(facility_id, facility_requests)
+                for facility_id, facility_requests in by_facility.items()
+            ))
             
             print("Completed availability check cycle")
         except Exception as e:
             print(f"Error in check_all_notifications: {e}")
     
-    async def check_notification_request(self, request: dict):
-        """Check a single notification request for availability"""
+    async def check_facility(self, facility_id: str, requests: list):
+        """Fetch a campground once covering every saved search's dates, then evaluate each search"""
+        # ISO date strings sort chronologically
+        start_date = min(r["start_date"] for r in requests)
+        end_date = max(r["end_date"] for r in requests)
+        
+        try:
+            loop = asyncio.get_event_loop()
+            availability_data = await loop.run_in_executor(
+                executor,
+                functools.partial(recreation_api.check_availability, facility_id, start_date, end_date)
+            )
+        except Exception as e:
+            print(f"Error fetching facility {facility_id}: {e}")
+            return
+        
+        if not availability_data.get("success", False):
+            print(f"Failed to check availability for facility {facility_id}: {availability_data.get('error')}")
+            return
+        
+        for request in requests:
+            await self.check_notification_request(request, availability_data)
+    
+    async def check_notification_request(self, request: dict, availability_data: dict):
+        """Evaluate a single notification request against fetched availability data"""
         db = get_database()
         facility_id = request["facility_id"]
         
         try:
-            # Run the synchronous API call in a thread pool to avoid blocking
             loop = asyncio.get_event_loop()
-            availability_data = await loop.run_in_executor(
-                executor,
-                functools.partial(
-                    recreation_api.check_availability,
-                    facility_id,
-                    request["start_date"],
-                    request["end_date"]
-                )
-            )
-            
-            if not availability_data.get("success", False):
-                print(f"Failed to check availability for facility {facility_id}: {availability_data.get('error')}")
-                return
-            
             campsites_data = availability_data.get("campsites", {})
             total_sites = availability_data.get("count", 0)
             
@@ -81,26 +96,24 @@ class AvailabilityScheduler:
             ]
             
             # Store availability snapshot
+            last_check = await db.availability_history.find_one(
+                {"notification_request_id": request["_id"]},
+                sort=[("timestamp", -1)]
+            )
+            
             await db.availability_history.insert_one({
+                "notification_request_id": request["_id"],
                 "facility_id": facility_id,
                 "timestamp": datetime.utcnow(),
                 "available_count": len(newly_available),
                 "total_sites": total_sites,
-                "available_sites": newly_available,
-                "full_data": available_sites
+                "available_sites": newly_available
             })
             
             print(f"Checked facility {facility_id}: {len(newly_available)} sites available out of {total_sites} total")
             
             # Check if we should send notification
             should_notify = False
-            
-            # Get the last availability check
-            last_check = await db.availability_history.find_one(
-                {"facility_id": facility_id},
-                sort=[("timestamp", -1)],
-                skip=1  # Skip the one we just inserted
-            )
             
             if last_check:
                 # Check if availability increased (sites became available)
@@ -114,20 +127,17 @@ class AvailabilityScheduler:
                 should_notify = True
             
             # Send notifications if needed
+            all_available_dates = []
+            for site_info in available_sites.values():
+                if site_info.get("has_availability", False) and site_info.get("available_dates"):
+                    all_available_dates.extend(site_info["available_dates"])
+            unique_dates = sorted(set(all_available_dates))
+            
             if should_notify:
                 user = await db.users.find_one({"_id": request["user_id"]})
                 
                 if user and newly_available:
                     dates = f"{request['start_date']} to {request['end_date']}"
-                    
-                    # Collect all available dates from all sites
-                    all_available_dates = []
-                    for site_id, site_info in available_sites.items():
-                        if site_info.get("has_availability", False) and site_info.get("available_dates"):
-                            all_available_dates.extend(site_info["available_dates"])
-                    
-                    # Deduplicate and sort dates
-                    unique_dates = sorted(list(set(all_available_dates)))
                     
                     # Send email notification
                     if request.get("notify_email", True):
@@ -197,12 +207,18 @@ class AvailabilityScheduler:
                 {"_id": request["_id"]},
                 {"$set": {
                     "last_checked": datetime.utcnow(),
-                    "last_available_count": len(newly_available)
+                    "last_available_count": len(newly_available),
+                    "available_sites": newly_available,
+                    "available_dates": unique_dates
                 }}
             )
             
         except Exception as e:
             print(f"Error checking notification request {request.get('_id')}: {e}")
+    
+    async def reverify_proxies(self):
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(executor, proxy_manager.reverify_benched)
     
     def start(self):
         """Start the scheduler"""
@@ -212,6 +228,13 @@ class AvailabilityScheduler:
                 'interval',
                 seconds=self.scrape_interval,
                 id='availability_check',
+                replace_existing=True
+            )
+            self.scheduler.add_job(
+                self.reverify_proxies,
+                'interval',
+                seconds=REVERIFY_INTERVAL_SECONDS,
+                id='proxy_reverify',
                 replace_existing=True
             )
             self.scheduler.start()
